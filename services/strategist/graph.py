@@ -45,6 +45,7 @@ from core.intents import (
     RecoveryIntent,
 )
 from core.llm import LLM, LLMUnavailable, NullLLM, Usage, render_untrusted_block
+from core.trace import AgentStep, merge_steps
 from core.verdicts import Action, Evidence, VerdictResult
 
 #: Hard bounds. Enforced in the router, never in the prompt - a bound in
@@ -75,6 +76,7 @@ def _merge(a: tuple, b: tuple) -> tuple:
 
 
 class StrategyState(TypedDict, total=False):
+    steps: Annotated[tuple[AgentStep, ...], merge_steps]
     order_id: str
     now: int
     verdict: VerdictResult
@@ -142,6 +144,7 @@ class Strategist:
         self.llm = llm or NullLLM()
         self.usage = getattr(self.llm, "usage", Usage())
         self.probes = probes or {}
+        self._source = "scripted" if type(self.llm).__name__ == "ScriptedLLM" else "model"
         self.app = self._build(checkpointer)
 
     # ------------------------------ nodes ------------------------------
@@ -150,6 +153,8 @@ class Strategist:
         """Temperature 0 - this is routing, not writing."""
         turns = state.get("turns", 0) + 1
         known = {e.source: e.value for e in state.get("evidence", ()) if e.available}
+        t0 = time.monotonic()
+        user = ""
 
         try:
             user = (
@@ -162,33 +167,58 @@ class Strategist:
             a: Assessment = await self.llm.structured(
                 Assessment, ASSESS_SYSTEM, user, node="assess", temperature=0.0
             )
+            step = AgentStep(
+                agent="strategist", node=f"assess (turn {turns})", source=self._source,
+                model=self.cfg.model_name, summary=a.reasoning,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                prompt_chars=len(ASSESS_SYSTEM) + len(user),
+                tokens_in=len(ASSESS_SYSTEM + user) // 4,
+                output={"next_probe": a.next_probe, "confidence": a.confidence,
+                        "turn": turns, "max_turns": MAX_TURNS,
+                        "evidence_so_far": sorted(known)},
+            )
             return {
                 "turns": turns,
                 "trace": state.get("trace", []) + [f"turn {turns}: {a.next_probe} - {a.reasoning}"],
                 "ctx": {**state.get("ctx", {}), "next_probe": a.next_probe},
                 "llm_calls": state.get("llm_calls", 0) + 1,
+                "steps": (step,),
             }
         except LLMUnavailable as e:
             # No model: take the safe generic path rather than guessing at
             # a clever intervention.
+            step = AgentStep(
+                agent="strategist", node=f"assess (turn {turns})", source="fallback",
+                summary="model unavailable - skipping straight to a generic template",
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                output={"next_probe": "compose", "turn": turns}, error=str(e),
+            )
             return {
                 "turns": turns,
                 "trace": state.get("trace", []) + [f"turn {turns}: compose (LLM unavailable)"],
                 "ctx": {**state.get("ctx", {}), "next_probe": "compose"},
                 "degraded": state.get("degraded", []) + [f"assess: {e}"],
+                "steps": (step,),
             }
 
     async def probe_downtime(self, state: StrategyState) -> StrategyState:
-        fn = self.probes.get("downtime")
-        if fn is None:
-            return {"evidence": (Evidence.unavailable("downtime", "no probe configured"),)}
-        return {"evidence": (await fn(state),)}
+        return await self._probe(state, "downtime", "no probe configured")
 
     async def probe_history(self, state: StrategyState) -> StrategyState:
-        fn = self.probes.get("history")
-        if fn is None:
-            return {"evidence": (Evidence.unavailable("history", "stub: no history source"),)}
-        return {"evidence": (await fn(state),)}
+        return await self._probe(state, "history", "stub: no history source")
+
+    async def _probe(self, state: StrategyState, name: str, why: str) -> StrategyState:
+        t0 = time.monotonic()
+        fn = self.probes.get(name)
+        ev = Evidence.unavailable(name, why) if fn is None else await fn(state)
+        step = AgentStep(
+            agent="strategist", node=f"probe_{name}", source="rules",
+            summary=(f"{name}: {ev.value}" if ev.available else f"{name} unavailable - {ev.provenance}"),
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            output={"available": ev.available, "value": ev.value,
+                    "confidence": ev.confidence, "provenance": ev.provenance},
+        )
+        return {"evidence": (ev,), "steps": (step,)}
 
     async def compose(self, state: StrategyState) -> StrategyState:
         """Temperature 0.4 - wording, within a schema that bounds it."""
@@ -198,6 +228,8 @@ class Strategist:
 
         downtime = ev.get("downtime") or {}
         history = ev.get("history") or {}
+        t0 = time.monotonic()
+        user = ""
 
         try:
             user = (
@@ -213,16 +245,45 @@ class Strategist:
                 Composition, COMPOSE_SYSTEM, user, node="compose", temperature=0.4
             )
             intent = self._to_intent(c, state)
+            step = AgentStep(
+                agent="strategist", node="compose", source=self._source,
+                model=self.cfg.model_name, summary=c.reasoning,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                prompt_chars=len(COMPOSE_SYSTEM) + len(user),
+                tokens_in=len(COMPOSE_SYSTEM + user) // 4,
+                output={
+                    "template_id": c.template_id, "channel": c.channel,
+                    "method_hint": c.method_hint, "variables": list(c.variables),
+                    "model_confidence": c.confidence,
+                    "fold_confidence": round(state["verdict"].confidence, 3),
+                    # The carried confidence is the lower of the two: a
+                    # confident model cannot lift a shaky verdict over the
+                    # gate's floor.
+                    "carried_confidence": round(intent.confidence, 3),
+                    "rendered": TEMPLATE_REGISTRY[c.template_id].render(list(c.variables)),
+                },
+            )
             return {
                 "intent": intent,
                 "trace": state.get("trace", []) + [f"compose: {c.template_id} over {c.channel}"],
                 "llm_calls": state.get("llm_calls", 0) + 1,
+                "steps": (step,),
             }
         except LLMUnavailable as e:
+            fb = self._fallback_intent(state)
+            step = AgentStep(
+                agent="strategist", node="compose", source="fallback",
+                summary="model unavailable - generic RCV_RETRY over SMS",
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                output={"template_id": fb.template_id, "channel": fb.channel.value,
+                        "variables": list(fb.variables)},
+                error=str(e),
+            )
             return {
-                "intent": self._fallback_intent(state),
+                "intent": fb,
                 "trace": state.get("trace", []) + ["compose: deterministic fallback"],
                 "degraded": state.get("degraded", []) + [f"compose: {e}"],
+                "steps": (step,),
             }
 
     # ---------------------------- assembly ----------------------------
@@ -269,6 +330,14 @@ class Strategist:
         if state.get("turns", 0) >= MAX_TURNS:
             return "compose"
         if self.usage.total > MAX_TOKENS:
+            return "compose"
+        # MAX_LATENCY_S was declared as a hard bound but never checked -
+        # a documented guarantee that nothing enforced. A slow provider
+        # (Nemotron's free tier runs 4-9s a call) can spend the whole
+        # budget on probing and still owe the customer a message, so cut
+        # to compose while there is time left to produce one.
+        started = state.get("ctx", {}).get("started_at")
+        if started is not None and (time.monotonic() - started) > MAX_LATENCY_S:
             return "compose"
 
         nxt = state.get("ctx", {}).get("next_probe", "compose")
@@ -329,9 +398,10 @@ class Strategist:
             "trace": [],
             "llm_calls": 0,
             "degraded": [],
+            "steps": (),
             "amount": amount,
             "merchant": merchant,
-            "ctx": ctx or {},
+            "ctx": {**(ctx or {}), "started_at": time.monotonic()},
         }
         started = time.monotonic()
         out = await self.app.ainvoke(

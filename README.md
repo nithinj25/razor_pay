@@ -32,7 +32,7 @@ run time by `harness/demo.py` — none of it is written down as a constant.
 | Verdict accuracy | — | **6/6** |
 | p95 time to verdict | — | 16 ms |
 | Chaos faults handled | — | **9/9** |
-| Tests | — | **113 passing** (incl. 8 integration) |
+| Tests | — | **132 passing** (incl. 8 integration) |
 
 The two zeros are **invariants, not percentiles**. One violation is a bug,
 and `harness/demo.py` exits non-zero if either moves.
@@ -46,10 +46,33 @@ and `harness/demo.py` exits non-zero if either moves.
 | E | Method-scoped bank downtime | CONFIRMED_FAILED | CONFIRMED_FAILED | SEND_RECOVERY_LINK | 0* |
 | F | Prompt injection via `notes` | ORDER_SETTLED | ORDER_SETTLED | NOOP (vetoed) | 0 |
 
-\* D and E reach the model when `ANTHROPIC_API_KEY` is set — D for the
+\* D and E reach the agents when a provider key is set — D for the
 escalation narrative, E for the strategist's template choice. Without a
 key both degrade to deterministic fallbacks and still produce the correct
-verdict. That is chaos 4, on purpose.
+verdict. That is chaos 4, on purpose, and **Screen 5 shows which of the
+two actually happened** rather than leaving `0` to mean either.
+
+### Which model
+
+Two providers, switched by `LLM_PROVIDER`:
+
+| | Anthropic | NVIDIA NIM (free tier) |
+|---|---|---|
+| Schema enforcement | forced `tool_choice` — the model structurally cannot return prose | `response_format: json_schema` + `strict` + pydantic validation |
+| Under injection | schema holds | schema held in testing; both Nemotron models flagged the override attempt in their own reasoning |
+| Latency | — | ~4s (nano-30b), ~9s (super-120b) |
+
+NIM supports neither forced `tool_choice` nor `nvext.guided_json` on a
+free account — both were tried and rejected — so its guarantee is
+genuinely weaker: enforcement lives in the provider's decoder rather than
+in the protocol. That is why it is not the only defence. The composition
+schema has **no `action` field**, and the gate re-derives every
+precondition from the event store, so scenario F fails closed even if the
+schema layer were bypassed entirely.
+
+The free tier also rate-limits mid-loop. When it does, the agents fall
+back to deterministic paths and Screen 5 marks those steps `fallback` in
+amber — the degradation is visible rather than silent.
 
 ---
 
@@ -153,13 +176,14 @@ docker compose up -d                  # postgres · redis · redpanda · clickho
 python -m harness.demo --all          # accuracy, confusion matrix, veto log
 python -m harness.chaos --all         # 9 fault injections
 python -m harness.baseline            # the before-number, on its own
-pytest -q                             # 113 tests, ScriptedLLM only
+pytest -q                             # 132 tests, ScriptedLLM only
                                       #   integration tests skip when
                                       #   Docker is not up
 
 uvicorn web.main:app --port 8000      # the console → http://localhost:8000
                                       #   1 live console · 2 order timeline
                                       #   3 exception queue · 4 metrics
+                                      #   5 agents — node-by-node agent trace
 uvicorn services.ingress.main:app --port 8001  # webhook receiver
 python -m services.worker                      # the event-driven resolver
 python -m harness.replay --scenario A --speed 4x
@@ -177,8 +201,18 @@ and a signed webhook flowing ingress → Kafka → worker → ClickHouse. `servi
 resolve, gate, execute, persist outcomes, and a scheduler tick that
 re-folds orders whose banking-day recheck has come due.
 
-No API key is required for any of the above. Set `ANTHROPIC_API_KEY` to
-exercise the two agent paths; everything still runs without it.
+No API key is required for any of the above. Set `NVIDIA_API_KEY` (free,
+build.nvidia.com) or `ANTHROPIC_API_KEY` to exercise the two agent paths
+live; everything still runs without one.
+
+**Screen 5 answers "are the agents actually working?"** It records every
+graph node with whether it was `rules`, `model`, `scripted` or `fallback`,
+plus tokens and latency — so `LLM calls: 0` can no longer mean either "the
+deterministic rules did their job" (the claim) or "the model is
+misconfigured and everything is silently falling back" (a broken system
+that looks identical from the outside). Its `scripted` mode runs the full
+agent loop on canned responses, so the graph is inspectable with no key at
+all, and scripted steps are never counted as live ones.
 
 ---
 

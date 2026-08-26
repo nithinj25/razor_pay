@@ -37,7 +37,7 @@
   </header>
 
   <!-- scenario + speed, shared by screens 1 and 2 -->
-  <div class="flex flex-wrap items-center gap-3 mb-4" x-show="tab==='console' || tab==='timeline'">
+  <div class="flex flex-wrap items-center gap-3 mb-4" x-show="tab==='console' || tab==='timeline' || tab==='agents'">
     <select x-model="scenario" @change="onScenario()"
             class="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm">
       <template x-for="s in scenarios" :key="s.key">
@@ -320,6 +320,177 @@
     </template>
   </div>
 
+
+  <!-- ========== SCREEN 5 - agents ========== -->
+  <div x-show="tab==='agents'" class="space-y-4">
+
+    <!-- Is the model reachable at all? Every number below is
+         uninterpretable without this line. -->
+    <section class="border rounded-lg overflow-hidden"
+             :class="llm.configured ? 'border-emerald-800' : 'border-amber-800'">
+      <div class="px-4 py-3 flex flex-wrap items-center gap-4"
+           :class="llm.configured ? 'bg-emerald-950/40' : 'bg-amber-950/40'">
+        <span class="px-2 py-1 rounded text-xs font-bold"
+              :class="llm.configured ? 'bg-emerald-500 text-black' : 'bg-amber-500 text-black'"
+              x-text="llm.configured ? 'MODEL LIVE' : 'NO API KEY'"></span>
+        <span class="text-sm font-bold" x-text="llm.model || 'no provider configured'"></span>
+        <span class="text-xs text-zinc-500" x-text="llm.provider ? 'via ' + llm.provider : ''"></span>
+        <span class="text-xs text-zinc-500 basis-full"
+              x-text="'schema enforcement: ' + (llm.schema_enforcement || 'none')"></span>
+        <span class="text-xs text-zinc-600 basis-full" x-text="llm.message"></span>
+      </div>
+    </section>
+
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="text-xs uppercase tracking-widest text-zinc-500">run mode</span>
+      <div class="flex rounded overflow-hidden border border-zinc-700">
+        <button @click="agentMode='auto'; load()"
+                :class="agentMode==='auto' ? 'bg-zinc-100 text-zinc-900 font-bold' : 'bg-zinc-900 text-zinc-400'"
+                class="px-3 py-2 text-sm">live</button>
+        <button @click="agentMode='scripted'; load()"
+                :class="agentMode==='scripted' ? 'bg-sky-500 text-black font-bold' : 'bg-zinc-900 text-zinc-400'"
+                class="px-3 py-2 text-sm">scripted</button>
+      </div>
+      <span class="text-xs text-zinc-500"
+            x-text="agentMode==='scripted'
+              ? 'Canned responses. Proves the graph runs; claims nothing about the model.'
+              : 'Real calls to the configured provider.'"></span>
+      <button @click="load()" class="ml-auto px-3 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">
+        re-run
+      </button>
+    </div>
+
+    <template x-if="agentsLoading">
+      <div class="text-sm text-zinc-500 py-6">running the agents…</div>
+    </template>
+
+    <template x-if="agents.summary && !agentsLoading">
+      <section class="border border-zinc-800 rounded-lg overflow-hidden">
+        <div class="bg-zinc-900 px-4 py-2 flex flex-wrap items-center gap-4">
+          <span class="text-xs uppercase tracking-widest text-zinc-400">agent activity</span>
+          <span class="px-2 py-0.5 rounded text-xs font-bold"
+                :class="healthClass(agents.summary.health)" x-text="agents.summary.health"></span>
+          <span class="text-xs text-zinc-500" x-text="agents.expectation"></span>
+        </div>
+
+        <div class="p-4 grid grid-cols-2 sm:grid-cols-5 gap-4 border-b border-zinc-900">
+          <div><div class="text-xs text-zinc-500">model calls</div>
+               <div class="text-2xl font-bold"
+                    :class="agents.summary.model_calls ? 'text-emerald-400' : 'text-zinc-600'"
+                    x-text="agents.summary.model_calls"></div></div>
+          <div><div class="text-xs text-zinc-500">scripted</div>
+               <div class="text-2xl font-bold"
+                    :class="agents.summary.scripted_calls ? 'text-sky-400' : 'text-zinc-600'"
+                    x-text="agents.summary.scripted_calls"></div></div>
+          <div><div class="text-xs text-zinc-500">fallbacks</div>
+               <div class="text-2xl font-bold"
+                    :class="agents.summary.fallbacks ? 'text-amber-400' : 'text-zinc-600'"
+                    x-text="agents.summary.fallbacks"></div></div>
+          <div><div class="text-xs text-zinc-500">rule nodes</div>
+               <div class="text-2xl font-bold text-zinc-300" x-text="agents.summary.rule_nodes"></div></div>
+          <div><div class="text-xs text-zinc-500">tokens</div>
+               <div class="text-2xl font-bold text-zinc-300" x-text="agents.summary.tokens"></div></div>
+        </div>
+
+        <div class="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-900">
+          triage: <span class="text-zinc-300" x-text="agents.triage.route"></span>
+          - <span x-text="agents.triage.reason"></span>
+        </div>
+
+        <div class="divide-y divide-zinc-900">
+          <template x-for="(s,i) in agents.steps" :key="i">
+            <div class="p-4" :class="s.source==='fallback' ? 'bg-amber-950/20' : ''">
+              <div class="flex flex-wrap items-center gap-3 text-sm">
+                <span class="px-2 py-0.5 rounded text-xs font-bold w-20 text-center"
+                      :class="sourceClass(s.source)" x-text="s.source"></span>
+                <span class="text-zinc-500 w-24" x-text="s.agent"></span>
+                <span class="font-bold w-40" x-text="s.node"></span>
+                <span class="text-xs text-zinc-600" x-text="s.latency_ms + 'ms'"></span>
+                <template x-if="s.tokens">
+                  <span class="text-xs text-zinc-600" x-text="s.tokens + ' tok'"></span>
+                </template>
+                <template x-if="s.model && s.source==='model'">
+                  <span class="text-xs text-emerald-600" x-text="s.model"></span>
+                </template>
+              </div>
+              <div class="pl-24 mt-1 text-sm"
+                   :class="s.source==='fallback' ? 'text-amber-300' : 'text-zinc-300'"
+                   x-text="s.summary"></div>
+              <template x-if="s.error">
+                <div class="pl-24 mt-1 text-xs text-amber-500" x-text="s.error"></div>
+              </template>
+              <template x-if="Object.keys(s.output||{}).length">
+                <pre class="pl-24 mt-2 text-xs text-zinc-600 whitespace-pre-wrap break-all"
+                     x-text="JSON.stringify(s.output)"></pre>
+              </template>
+            </div>
+          </template>
+        </div>
+      </section>
+    </template>
+
+    <template x-if="agents.intent && !agentsLoading">
+      <div class="grid md:grid-cols-2 gap-4">
+        <section class="border border-sky-900/60 rounded-lg overflow-hidden">
+          <div class="bg-sky-950/50 px-4 py-2 text-xs uppercase tracking-widest text-sky-300">
+            intent - what the agent proposed
+          </div>
+          <div class="p-4 space-y-2 text-sm">
+            <div class="flex gap-3"><span class="text-zinc-500 w-24">action</span>
+                 <span class="font-bold" x-text="agents.intent.action"></span></div>
+            <div class="flex gap-3"><span class="text-zinc-500 w-24">template</span>
+                 <span class="text-sky-300 font-bold" x-text="agents.intent.template_id || '-'"></span></div>
+            <div class="flex gap-3"><span class="text-zinc-500 w-24">channel</span>
+                 <span x-text="agents.intent.channel || '-'"></span></div>
+            <div class="flex gap-3"><span class="text-zinc-500 w-24">variables</span>
+                 <span class="text-zinc-400" x-text="(agents.intent.variables||[]).join('  |  ') || '-'"></span></div>
+            <div class="flex gap-3"><span class="text-zinc-500 w-24">confidence</span>
+                 <span class="font-bold" x-text="agents.intent.confidence"></span></div>
+            <div class="text-xs text-zinc-500 pt-2 border-t border-zinc-800"
+                 x-text="agents.intent.reasoning"></div>
+            <p class="text-xs text-zinc-600 pt-1">
+              The model filled a registered template. It never wrote this text, and
+              its output schema has no <span class="text-zinc-400">action</span> field.
+            </p>
+          </div>
+        </section>
+
+        <section class="border rounded-lg overflow-hidden"
+                 :class="agents.gate && agents.gate.allowed ? 'border-emerald-900/60' : 'border-red-900/60'">
+          <div class="px-4 py-2 text-xs uppercase tracking-widest"
+               :class="agents.gate && agents.gate.allowed ? 'bg-emerald-950/50 text-emerald-300' : 'bg-red-950/50 text-red-300'">
+            gate - re-derived independently
+          </div>
+          <div class="p-4 space-y-2 text-sm" x-show="agents.gate">
+            <div class="flex items-center gap-3">
+              <span class="px-2 py-0.5 rounded text-xs font-bold"
+                    :class="agents.gate.allowed ? 'bg-emerald-500 text-black' : 'bg-red-500 text-black'"
+                    x-text="agents.gate.allowed ? 'ALLOWED' : 'VETOED'"></span>
+              <span class="text-xs text-zinc-500" x-text="agents.gate.reason"></span>
+            </div>
+            <template x-for="(v,i) in (agents.gate.vetoes||[])" :key="i">
+              <div class="text-xs"><span class="text-amber-400 font-bold" x-text="v.rule"></span>
+                   <span class="text-zinc-400" x-text="' - ' + v.reason"></span></div>
+            </template>
+            <div class="pt-2 border-t border-zinc-800 text-xs space-y-1">
+              <div class="text-zinc-500 uppercase tracking-widest">what the gate derived for itself</div>
+              <template x-for="(val,k) in (agents.gate.derived||{})" :key="k">
+                <div class="flex gap-3"><span class="text-zinc-600 w-56" x-text="k"></span>
+                     <span class="text-zinc-300" x-text="String(val)"></span></div>
+              </template>
+            </div>
+            <template x-if="agents.gate.rendered">
+              <div class="pt-2 border-t border-zinc-800">
+                <div class="text-xs text-zinc-500 uppercase tracking-widest mb-1">message that would be sent</div>
+                <div class="text-sm text-zinc-200 bg-zinc-900 rounded p-2" x-text="agents.gate.rendered"></div>
+              </div>
+            </template>
+          </div>
+        </section>
+      </div>
+    </template>
+  </div>
+
   <!-- ══════════ SCREEN 4 — metrics ══════════ -->
   <div x-show="tab==='metrics'" class="space-y-4">
     <template x-if="metrics.error">
@@ -441,6 +612,7 @@ function app() {
       {id:'timeline',   label:'2 · Order timeline'},
       {id:'exceptions', label:'3 · Exception queue'},
       {id:'metrics',    label:'4 · Metrics'},
+      {id:'agents',     label:'5 · Agents'},
     ],
     tab: 'console',
     scenarios: [], scenario: 'A', speed: 4, running: false, finished: false,
@@ -448,10 +620,16 @@ function app() {
     decision: {fold:[], rules_fired:[], degraded:[]},
     tally: {baseline:0, nishchay:0},
     timeline: {}, exceptions: {}, metrics: {}, vetoFilter: '', copied: '',
+    agents: {}, agentMode: 'auto', agentsLoading: false,
+    llm: {configured:false, message:''},
     orderId: '', note: '', groundTruth: '', es: null,
 
     async init() {
       this.scenarios = await (await fetch('/api/scenarios')).json();
+      this.llm = await (await fetch('/api/llm-status')).json();
+      // Default to whichever mode will actually show something: the live
+      // path when a provider is configured, the scripted loop otherwise.
+      this.agentMode = this.llm.configured ? 'auto' : 'scripted';
       this.applyMeta();
     },
     applyMeta() {
@@ -468,6 +646,14 @@ function app() {
       } else if (this.tab === 'metrics') {
         const r = await fetch('/api/metrics');
         this.metrics = await r.json();
+      } else if (this.tab === 'agents') {
+        this.agentsLoading = true;
+        try {
+          this.agents = await (await fetch(
+            '/api/agents?scenario=' + this.scenario + '&mode=' + this.agentMode)).json();
+        } finally {
+          this.agentsLoading = false;
+        }
       }
     },
 
@@ -524,6 +710,19 @@ function app() {
         pair('False positives', h.baseline_duplicate_orders, h.nishchay_false_positives),
       ];
     },
+
+    sourceClass(s) { return {
+      model:    'bg-emerald-500 text-black',
+      scripted: 'bg-sky-500 text-black',
+      fallback: 'bg-amber-500 text-black',
+      rules:    'bg-zinc-700 text-zinc-200',
+    }[s] || 'bg-zinc-800'; },
+    healthClass(h) { return {
+      live:         'bg-emerald-500 text-black',
+      scripted:     'bg-sky-500 text-black',
+      degraded:     'bg-amber-500 text-black',
+      'rules-only': 'bg-zinc-600 text-zinc-100',
+    }[h] || 'bg-zinc-800'; },
 
     inr(n) { return (n||0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}); },
     vColour(v) { return {

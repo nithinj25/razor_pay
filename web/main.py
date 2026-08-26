@@ -352,3 +352,127 @@ async def exceptions() -> JSONResponse:
         })
 
     return JSONResponse({"count": len(cards), "cards": cards})
+
+
+@app.get("/api/llm-status")
+async def llm_status() -> JSONResponse:
+    """Is the model actually reachable?
+
+    The console leads with this because every other agent number is
+    uninterpretable without it. `llm_calls: 0` means one thing when a key
+    is configured and something completely different when it is not.
+    """
+    from core.config import settings as _settings
+    from core.llm import NullLLM
+
+    cfg = _settings()
+    llm = build_llm(cfg)
+    configured = not isinstance(llm, NullLLM)
+
+    # NVIDIA NIM supports neither forced tool_choice nor guided_json on
+    # this account, so structured output is enforced by response_format
+    # json_schema + pydantic validation. Say so rather than implying the
+    # same guarantee as Anthropic's forced tool use.
+    enforcement = {
+        "anthropic": "forced tool_choice - the model cannot return prose",
+        "nvidia": "response_format json_schema (strict) + pydantic validation",
+    }.get(cfg.provider, "none")
+
+    return JSONResponse({
+        "configured": configured,
+        "provider": cfg.provider,
+        "client": type(llm).__name__,
+        "model": cfg.model_name or None,
+        "schema_enforcement": enforcement,
+        "message": (
+            f"Live: agent calls go to {cfg.model_name} via {cfg.provider}. "
+            f"Structured output enforced by {enforcement}."
+            if configured else
+            "No LLM key configured (ANTHROPIC_API_KEY or NVIDIA_API_KEY). The "
+            "agents take their deterministic fallbacks, which still produces "
+            "correct verdicts - that is chaos 4. Use mode=scripted to watch the "
+            "agent loop run on canned responses."
+        ),
+    })
+
+
+@app.get("/api/agents")
+async def agents(
+    scenario: str = Query("E"), mode: str = Query("auto")
+) -> JSONResponse:
+    """Screen 5 - node-by-node, what each agent did.
+
+    `mode=auto`     use whatever is configured (live key, or fallbacks).
+    `mode=scripted` run the graphs on canned responses so the loop is
+                    visible without an API key. Every step is tagged
+                    `scripted` so it can never be mistaken for a live call.
+    """
+    s = sc.BY_KEY.get(scenario.upper())
+    if s is None:
+        return JSONResponse({"error": f"unknown scenario {scenario}"}, status_code=404)
+
+    ex = Executor(dry_run=True)
+
+    if mode == "scripted":
+        from harness.scripted_agents import (
+            scripted_fetchers, scripted_llm, scripted_probes,
+        )
+        from services.resolver.graph import Resolver
+        from services.strategist.graph import Strategist
+
+        llm = scripted_llm(s.key)
+        # Wire the fixture's evidence through the real fetcher and probe
+        # interfaces rather than pre-seeding it. Seeding would hand the
+        # strategist everything up front, and its router would correctly
+        # decline to probe - hiding the branching loop that is the whole
+        # reason this screen exists.
+        p = Pipeline(
+            llm=llm, executor=ex,
+            resolver=Resolver(llm=llm, fetchers=scripted_fetchers(s)),
+            strategist=Strategist(llm=llm, probes=scripted_probes(s)),
+        )
+        d = await p.process(s.observations(), s.evaluate_at, order_id=s.order_id)
+    else:
+        p = Pipeline(llm=build_llm(), executor=ex)
+        d = await p.process(
+            s.observations(), s.evaluate_at, order_id=s.order_id,
+            seed_evidence=s.evidence,
+        )
+
+    intent = d.intent
+    return JSONResponse({
+        "scenario": s.key,
+        "title": s.title,
+        "mode": mode,
+        "verdict": d.verdict.verdict.value,
+        "confidence": round(d.verdict.confidence, 3),
+        "action": d.action.value,
+        "summary": d.agents.to_row(),
+        "steps": [st.to_row() for st in d.steps],
+        "triage": {"route": d.route.value, "reason": d.triage_reason},
+        "intent": None if intent is None else {
+            "action": intent.action.value,
+            "template_id": intent.template_id,
+            "channel": intent.channel.value if intent.channel else None,
+            "variables": list(intent.variables),
+            "confidence": round(intent.confidence, 3),
+            "reasoning": intent.reasoning,
+        },
+        "gate": None if d.gate is None else {
+            "allowed": d.gate.allowed,
+            "reason": d.gate.reason,
+            "rendered": d.gate.rendered,
+            "derived": d.gate.derived,
+            "vetoes": [{"rule": v.rule, "reason": v.reason} for v in d.gate.vetoes],
+        },
+        "outcome": None if d.outcome is None else {
+            "status": d.outcome.status, "detail": d.outcome.detail,
+        },
+        # Why a scenario reaching zero model calls is the design working
+        # rather than a fault.
+        "expectation": (
+            "Resolves on deterministic rules alone - zero LLM calls by design."
+            if s.expect_llm_calls == 0 else
+            "Reaches the agents: this is where the model earns its place."
+        ),
+    })

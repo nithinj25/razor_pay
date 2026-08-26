@@ -159,9 +159,194 @@ class AnthropicLLM:
         raise LLMUnavailable(f"schema violation after retry: {last}")
 
 
+def _inline_refs(schema: dict, defs: dict | None = None) -> dict:
+    """Flatten $ref/$defs and drop keywords NIM's strict mode rejects.
+
+    Pydantic emits nested models as `$defs` plus `$ref`. NVIDIA's strict
+    json_schema mode does not resolve those, so a nested schema would
+    silently become an unconstrained object - quietly removing the very
+    constraint we depend on. Inline them instead.
+    """
+    defs = defs if defs is not None else schema.get("$defs", {})
+    out: dict = {}
+    for k, v in schema.items():
+        if k in ("$defs", "title", "default"):
+            continue
+        if k == "$ref":
+            target = defs.get(str(v).rsplit("/", 1)[-1], {})
+            out.update(_inline_refs(target, defs))
+            continue
+        if isinstance(v, dict):
+            out[k] = _inline_refs(v, defs)
+        elif isinstance(v, list):
+            out[k] = [_inline_refs(i, defs) if isinstance(i, dict) else i for i in v]
+        else:
+            out[k] = v
+    # `anyOf: [X, null]` is how pydantic writes Optional. Strict mode is
+    # happier with a plain nullable type.
+    if "anyOf" in out:
+        variants = [a for a in out["anyOf"] if a.get("type") != "null"]
+        if len(variants) == 1:
+            nullable = len(variants) != len(out["anyOf"])
+            out.pop("anyOf")
+            out.update(variants[0])
+            if nullable and isinstance(out.get("type"), str):
+                out["type"] = [out["type"], "null"]
+    return out
+
+
+def to_nim_schema(model: Type[BaseModel]) -> dict:
+    s = _inline_refs(model.model_json_schema())
+    s.setdefault("type", "object")
+    s["additionalProperties"] = False
+    return s
+
+
+def extract_json(text: str) -> str:
+    """Pull the JSON object out of a reasoning model's reply.
+
+    Reasoning models sometimes narrate before answering even under a
+    schema constraint. Scanning for the outermost balanced braces is more
+    robust than a regex and does not require the response to be clean.
+    """
+    if not text:
+        raise ValueError("empty response")
+    start = text.find("{")
+    if start == -1:
+        raise ValueError(f"no JSON object in response: {text[:120]}")
+    depth, in_str, esc = 0, False, False
+    for i, ch in enumerate(text[start:], start):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    raise ValueError(f"unbalanced JSON in response: {text[:120]}")
+
+
+class NvidiaLLM:
+    """NVIDIA NIM, OpenAI-compatible. Free tier.
+
+    An honest note on the security property. With Anthropic we force
+    `tool_choice`, so the model structurally cannot return prose. This
+    account's NIM endpoint supports neither forced `tool_choice` nor
+    `nvext.guided_json` - both were tested and rejected - so the
+    constraint here is `response_format={"type": "json_schema", ...,
+    "strict": true}` plus pydantic validation on the way out.
+
+    That is a slightly weaker guarantee: enforcement is the provider's
+    decoder rather than a protocol-level requirement. It is backed by two
+    things that do not depend on the provider at all - the composition
+    schema has no `action` field, and the gate re-derives every
+    precondition from the event store. Scenario F still fails closed even
+    if this layer were bypassed entirely.
+
+    Tested under injection: the schema held on both models tried, and
+    each flagged the override attempt in its own reasoning field.
+    """
+
+    def __init__(self, cfg: Settings | None = None, client: Any = None) -> None:
+        self.cfg = cfg or settings()
+        self._client = client
+        self.usage = Usage()
+
+    async def structured(
+        self, schema: Type[T], system: str, user: str, node: str = "", temperature: float = 0.0
+    ) -> T:
+        import httpx
+
+        if not self.cfg.nvidia_api_key:
+            raise LLMUnavailable("NVIDIA_API_KEY not set")
+
+        nim_schema = to_nim_schema(schema)
+        body = {
+            "model": self.cfg.nvidia_model,
+            "messages": [
+                # The schema goes in the system prompt as well as in
+                # response_format. Belt and braces: a reasoning model that
+                # drifts from the decoder constraint usually still honours
+                # an explicit instruction.
+                {
+                    "role": "system",
+                    "content": (
+                        f"{system}\n\nReply with a single JSON object matching this "
+                        f"schema exactly. No prose outside the JSON.\n"
+                        f"{json.dumps(nim_schema)}"
+                    ),
+                },
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": 1024,
+            "temperature": temperature,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__.lower(),
+                    "schema": nim_schema,
+                    "strict": True,
+                },
+            },
+        }
+
+        client = self._client
+        owned = client is None
+        if owned:
+            client = httpx.AsyncClient(
+                base_url=self.cfg.nvidia_base_url,
+                headers={"Authorization": f"Bearer {self.cfg.nvidia_api_key}"},
+                timeout=90.0,
+            )
+        try:
+            last: Exception | None = None
+            for _ in range(2):
+                try:
+                    r = await client.post("/chat/completions", json=body)
+                    if r.status_code in (429, 503):
+                        # Free-tier worker exhaustion. Degrade rather than
+                        # stall - the caller has a deterministic fallback.
+                        raise LLMUnavailable(f"provider busy ({r.status_code})")
+                    r.raise_for_status()
+                    data = r.json()
+                    content = data["choices"][0]["message"]["content"]
+                    usage = data.get("usage", {})
+                    self.usage.add(
+                        node or schema.__name__,
+                        usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0),
+                    )
+                    return schema.model_validate_json(extract_json(content))
+                except LLMUnavailable:
+                    raise
+                except (ValidationError, ValueError) as e:
+                    last = e                 # one retry on a schema violation
+                    continue
+                except Exception as e:       # noqa: BLE001
+                    raise LLMUnavailable(f"{type(e).__name__}: {e}") from e
+            raise LLMUnavailable(f"schema violation after retry: {last}")
+        finally:
+            if owned:
+                await client.aclose()
+
+
 def build_llm(cfg: Settings | None = None) -> LLM:
+    """Whichever provider is configured. NullLLM when none is."""
     cfg = cfg or settings()
-    return AnthropicLLM(cfg) if cfg.anthropic_api_key else NullLLM()
+    return {
+        "anthropic": lambda: AnthropicLLM(cfg),
+        "nvidia": lambda: NvidiaLLM(cfg),
+    }.get(cfg.provider, NullLLM)()
 
 
 # ------------------------- untrusted input -------------------------

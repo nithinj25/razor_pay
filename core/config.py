@@ -21,8 +21,25 @@ class Settings(BaseSettings):
     rzp_webhook_secret_prev: str = ""
     rzp_api_base: str = "https://api.razorpay.com"
 
+    # -- LLM provider ------------------------------------------------
+    #: "anthropic" | "nvidia" | "auto". `auto` prefers whichever key is
+    #: present, Anthropic first.
+    llm_provider: str = "auto"
+
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
+
+    #: NVIDIA NIM, OpenAI-compatible. Free tier, which is why it is here.
+    #: Note it does NOT support forced tool_choice or nvext.guided_json on
+    #: this account - structured output is enforced with
+    #: response_format={"type":"json_schema", strict:true}, which held the
+    #: schema under prompt injection in testing. See core/llm.py.
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    #: nemotron-3-nano-30b-a3b answers in ~4s; super-120b-a12b reasons
+    #: better but takes ~9s, and the strategist's 6-turn loop has a 15s
+    #: budget. Latency is the reason the smaller model is the default.
+    nvidia_model: str = "nvidia/nemotron-3-nano-30b-a3b"
 
     postgres_dsn: str = "postgresql://nishchay:nishchay@localhost:5432/nishchay"
     redis_url: str = "redis://localhost:6379"
@@ -47,6 +64,27 @@ class Settings(BaseSettings):
     @property
     def is_test_mode(self) -> bool:
         return self.rzp_key_id.startswith("rzp_test_")
+
+    @property
+    def provider(self) -> str:
+        """Which provider will actually be used."""
+        if self.llm_provider == "anthropic":
+            return "anthropic" if self.anthropic_api_key else "none"
+        if self.llm_provider == "nvidia":
+            return "nvidia" if self.nvidia_api_key else "none"
+        if self.anthropic_api_key:
+            return "anthropic"
+        if self.nvidia_api_key:
+            return "nvidia"
+        return "none"
+
+    @property
+    def model_name(self) -> str:
+        """The model id to report in traces, whichever provider is live."""
+        return {
+            "anthropic": self.anthropic_model,
+            "nvidia": self.nvidia_model,
+        }.get(self.provider, "")
 
 
 @lru_cache

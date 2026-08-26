@@ -17,6 +17,7 @@ from core.events import Observation
 from core.fold import FoldConfig, fold
 from core.intents import Category, RecoveryIntent
 from core.llm import LLM, NullLLM
+from core.trace import AgentStep, AgentSummary
 from core.verdicts import Action, Evidence, Verdict, VerdictResult
 from services.executor.main import Executor, Outcome
 from services.gate.rules import CustomerContext, GateDecision, evaluate, evidence_version
@@ -44,6 +45,10 @@ class Decision:
     degraded: list[str] = field(default_factory=list)
     evidence: tuple[Evidence, ...] = ()
     narrative: Any = None
+    #: Node-by-node record of what each agent did, and whether a model
+    #: was actually involved. Without this, `llm_calls: 0` is ambiguous
+    #: between "the rules did their job" and "the model is misconfigured".
+    steps: tuple[AgentStep, ...] = ()
 
     @property
     def action(self) -> Action:
@@ -64,7 +69,12 @@ class Decision:
             "latency_s": self.latency_s,
             "amount_due": self.verdict.amount_due,
             "amount_paid": self.verdict.amount_paid,
+            "agents": self.agents.to_row(),
         }
+
+    @property
+    def agents(self) -> AgentSummary:
+        return AgentSummary.of(self.steps)
 
 
 class Pipeline:
@@ -132,6 +142,7 @@ class Pipeline:
             degraded=list(state.get("degraded", [])),
             evidence=evidence,
             narrative=state.get("narrative"),
+            steps=tuple(state.get("steps", ())),
         )
 
         # -- A time-dependent verdict is a deferral, not an answer.
@@ -158,6 +169,7 @@ class Pipeline:
             d.llm_calls += s.get("llm_calls", 0)
             d.trace += s.get("trace", [])
             d.degraded += s.get("degraded", [])
+            d.steps = d.steps + tuple(s.get("steps", ()))
         else:
             d.intent = self._deterministic_intent(verdict, ev_version)
 

@@ -29,6 +29,7 @@ from core.config import Settings, settings
 from core.events import Observation
 from core.fold import FoldConfig, fold
 from core.llm import LLM, LLMUnavailable, NullLLM, Usage, render_untrusted_block
+from core.trace import AgentStep, merge_steps
 from core.verdicts import Evidence, Verdict, VerdictResult
 from services.resolver.fetchers import CircuitBreaker, FetchContext, gather_evidence
 from services.resolver.fetchers.razorpay import FETCHERS, NEEDS_CLIENT, PLANNABLE
@@ -67,6 +68,7 @@ def _merge(a: tuple, b: tuple) -> tuple:
 
 
 class ResolveState(TypedDict, total=False):
+    steps: Annotated[tuple[AgentStep, ...], merge_steps]
     order_id: str
     now: int
     observations: list[Observation]
@@ -134,13 +136,35 @@ class Resolver:
         # dependencies, so the skip only applies to the default set.
         self._default_fetchers = fetchers is None
         self.breakers: dict[str, CircuitBreaker] = {}
+        # A scripted response must never be presentable as a real API
+        # call: the console's whole job here is telling those apart.
+        self._source = "scripted" if type(self.llm).__name__ == "ScriptedLLM" else "model"
         self.usage = getattr(self.llm, "usage", Usage())
         self.app = self._build(checkpointer)
+
+    @staticmethod
+    def _attempted(state: ResolveState) -> set[str]:
+        """Probes already tried this run, successful or not.
+
+        Skipped and unavailable probes count. A probe that cannot run is
+        answered - re-asking for it is how the graph ends up looping
+        without making progress.
+        """
+        out: set[str] = set()
+        for st in state.get("steps", ()):
+            if st.node != "fetch":
+                continue
+            o = st.output or {}
+            out |= set(o.get("available", []))
+            out |= set(o.get("unavailable", []))
+            out |= set(o.get("skipped", []))
+        return out
 
     # ------------------------------ nodes ------------------------------
 
     async def precheck(self, state: ResolveState) -> ResolveState:
         """Deterministic rules first. This node makes zero LLM calls."""
+        t0 = time.monotonic()
         v = fold(
             state["observations"],
             state["now"],
@@ -148,7 +172,14 @@ class Resolver:
             evidence=state.get("evidence", ()),
             cfg=self.fold_cfg,
         )
-        return {"verdict": v, "rounds": state.get("rounds", 0)}
+        step = AgentStep(
+            agent="resolver", node="precheck", source="rules",
+            summary=f"fold -> {v.verdict.value} @ {v.confidence:.2f}",
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            output={"verdict": v.verdict.value, "confidence": round(v.confidence, 3),
+                    "rules_fired": list(v.rules_fired)},
+        )
+        return {"verdict": v, "rounds": state.get("rounds", 0), "steps": (step,)}
 
     async def plan(self, state: ResolveState) -> ResolveState:
         """LLM chooses probes. Falls back to a fixed plan if unavailable."""
@@ -156,13 +187,21 @@ class Resolver:
         obs = state["observations"]
         latest = obs[-1] if obs else None
 
+        # Only offer probes we have not already attempted, or the planner
+        # re-requests the same ones every round and the graph spins.
+        attempted = self._attempted(state)
+        untried = [f for f in PLANNABLE if f not in attempted]
+
         # The deterministic fallback is not a degraded afterthought: it is
         # what runs during chaos 4, and it must be good enough that the
         # system still resolves most cases without a model at all.
-        fallback = ["attempts", "payment"]
+        priority = ["attempts", "payment"]
         if latest is not None and latest.error_step in ("payment_initiation", "payment_authentication"):
-            fallback.append("downtime")
+            priority.append("downtime")
+        fallback = [f for f in priority if f in untried] or untried[:3]
 
+        t0 = time.monotonic()
+        user = ""
         try:
             user = (
                 f"<verdict>{v.verdict.value} confidence={v.confidence:.2f} "
@@ -172,22 +211,43 @@ class Resolver:
                 f"error_step={latest.error_step if latest else None} "
                 f"error_reason={latest.error_reason if latest else None}</payment>\n"
                 f"<siblings>{len({o.payment_id for o in obs if o.payment_id})}</siblings>\n"
-                f"<available_probes>{list(PLANNABLE)}</available_probes>"
+                f"<available_probes>{untried}</available_probes>\n"
+                f"<already_attempted>{sorted(attempted)}</already_attempted>"
             )
             plan: Plan = await self.llm.structured(
                 Plan, PLAN_SYSTEM, user, node="plan", temperature=0.0
             )
-            chosen = [f for f in plan.fetchers if f in self.fetchers][:3] or fallback
+            chosen = [
+                f for f in plan.fetchers
+                if f in self.fetchers and f not in attempted
+            ][:3] or fallback
+            step = AgentStep(
+                agent="resolver", node="plan", source=self._source,
+                model=self.cfg.model_name,
+                summary=plan.reasoning,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                prompt_chars=len(PLAN_SYSTEM) + len(user),
+                tokens_in=len(PLAN_SYSTEM + user) // 4,
+                output={"fetchers": chosen, "confidence": plan.confidence},
+            )
             return {
                 "fetch_ctx": {"chosen": chosen},
                 "plan_reasoning": plan.reasoning,
                 "llm_calls": state.get("llm_calls", 0) + 1,
+                "steps": (step,),
             }
         except LLMUnavailable as e:
+            step = AgentStep(
+                agent="resolver", node="plan", source="fallback",
+                summary=f"model unavailable - fixed plan {fallback}",
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                output={"fetchers": fallback}, error=str(e),
+            )
             return {
                 "fetch_ctx": {"chosen": fallback},
                 "plan_reasoning": f"deterministic plan (LLM unavailable: {e})",
                 "degraded": state.get("degraded", []) + [f"plan: {e}"],
+                "steps": (step,),
             }
 
     async def fetch(self, state: ResolveState) -> ResolveState:
@@ -217,8 +277,26 @@ class Resolver:
             client=state.get("fetch_ctx", {}).get("client"),
             extra=state.get("fetch_ctx", {}).get("extra", {}),
         )
+        t0 = time.monotonic()
         ev = await gather_evidence(subset, ctx, self.breakers, self.cfg.fetch_timeout_s)
-        out: dict = {"evidence": ev, "rounds": state.get("rounds", 0) + 1}
+        live = [e.source for e in ev if e.available]
+        dead = [e.source for e in ev if not e.available]
+        step = AgentStep(
+            agent="resolver", node="fetch", source="rules",
+            summary=(f"probed {len(ev)} in parallel: {len(live)} returned"
+                     + (f", {len(dead)} unavailable" if dead else "")
+                     + (f", {len(skipped)} skipped" if skipped else "")),
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            output={
+                "available": live, "unavailable": dead, "skipped": skipped,
+                "evidence": [
+                    {"source": e.source, "confidence": e.confidence,
+                     "provenance": e.provenance, "value": e.value}
+                    for e in ev
+                ],
+            },
+        )
+        out: dict = {"evidence": ev, "rounds": state.get("rounds", 0) + 1, "steps": (step,)}
         if skipped:
             out["degraded"] = state.get("degraded", []) + [
                 f"skipped (no API client): {', '.join(skipped)}"
@@ -227,6 +305,8 @@ class Resolver:
 
     async def analyze(self, state: ResolveState) -> ResolveState:
         """Re-fold with the new evidence. Rules decide; the model narrates."""
+        t0 = time.monotonic()
+        before = state.get("verdict")
         v = fold(
             state["observations"],
             state["now"],
@@ -234,7 +314,18 @@ class Resolver:
             evidence=state.get("evidence", ()),
             cfg=self.fold_cfg,
         )
-        return {"verdict": v}
+        moved = before is not None and before.verdict != v.verdict
+        step = AgentStep(
+            agent="resolver", node="analyze", source="rules",
+            summary=(
+                f"re-fold with evidence: {before.verdict.value} -> {v.verdict.value}"
+                if moved else f"re-fold: still {v.verdict.value} @ {v.confidence:.2f}"
+            ),
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            output={"verdict": v.verdict.value, "confidence": round(v.confidence, 3),
+                    "rules_fired": list(v.rules_fired), "changed": moved},
+        )
+        return {"verdict": v, "steps": (step,)}
 
     async def narrate(self, state: ResolveState) -> ResolveState:
         """Only for UNRESOLVED. Writes the human's evidence packet."""
@@ -257,17 +348,35 @@ class Resolver:
             f"payment_id={latest.payment_id if latest else None}</identifiers>\n"
             + render_untrusted_block(untrusted)
         )
+        t0 = time.monotonic()
         try:
             n: Narrative = await self.llm.structured(
                 Narrative, ANALYZE_SYSTEM, user, node="narrate", temperature=0.2
             )
-            return {"narrative": n, "llm_calls": state.get("llm_calls", 0) + 1}
+            step = AgentStep(
+                agent="resolver", node="narrate", source=self._source,
+                model=self.cfg.model_name, summary=n.summary,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                prompt_chars=len(ANALYZE_SYSTEM) + len(user),
+                tokens_in=len(ANALYZE_SYSTEM + user) // 4,
+                output={"what_was_checked": n.what_was_checked,
+                        "what_is_missing": n.what_is_missing,
+                        "suggested_next_step": n.suggested_next_step},
+            )
+            return {"narrative": n, "llm_calls": state.get("llm_calls", 0) + 1,
+                    "steps": (step,)}
         except LLMUnavailable as e:
             # Chaos 4: no model means no prose. The verdict is unchanged,
             # because the verdict never came from the model.
+            step = AgentStep(
+                agent="resolver", node="narrate", source="fallback",
+                summary="model unavailable - escalating without a narrative",
+                latency_ms=int((time.monotonic() - t0) * 1000), error=str(e),
+            )
             return {
                 "narrative": None,
                 "degraded": state.get("degraded", []) + [f"narrate: {e}"],
+                "steps": (step,),
             }
 
     # ----------------------------- routing -----------------------------
@@ -285,13 +394,39 @@ class Resolver:
         v = state["verdict"]
         if state.get("rounds", 0) >= MAX_ROUNDS:
             return "narrate" if v.verdict == Verdict.UNRESOLVED else "done"
-        if v.verdict == Verdict.UNRESOLVED:
-            # One more round only if a probe we have not tried could help.
-            tried = {e.source for e in state.get("evidence", ())}
-            if set(PLANNABLE) - tried and state.get("rounds", 0) < MAX_ROUNDS:
-                return "plan"
-            return "narrate"
-        return "done"
+        if v.verdict != Verdict.UNRESOLVED:
+            return "done"
+
+        # Loop back only if a probe we have not yet *attempted* could help.
+        #
+        # "Attempted" has to include probes that were skipped or came back
+        # unavailable, not just ones that returned evidence. Counting only
+        # successful probes means a skipped fetcher never enters the tried
+        # set, so the planner is asked for it again every round - three
+        # identical planning calls that fetch nothing and change no
+        # verdict. Cheap when the model is absent; three wasted API calls
+        # per resolution when it is not.
+        attempted: set[str] = set()
+        for st in state.get("steps", ()):
+            if st.node != "fetch":
+                continue
+            out = st.output or {}
+            attempted |= set(out.get("available", []))
+            attempted |= set(out.get("unavailable", []))
+            attempted |= set(out.get("skipped", []))
+
+        # A round that attempted nothing at all means no fetcher is
+        # configured for anything the planner can still ask for. Looping
+        # again cannot change that, and each lap costs a planning call.
+        fetches = [st for st in state.get("steps", ()) if st.node == "fetch"]
+        if fetches:
+            last = fetches[-1].output or {}
+            if not (last.get("available") or last.get("unavailable") or last.get("skipped")):
+                return "narrate"
+
+        if set(PLANNABLE) - attempted:
+            return "plan"
+        return "narrate"
 
     def _build(self, checkpointer: Any):
         from langgraph.graph import END, StateGraph
@@ -334,6 +469,7 @@ class Resolver:
             "rounds": 0,
             "llm_calls": 0,
             "degraded": [],
+            "steps": (),
             "fetch_ctx": {"client": client, "extra": extra or {}},
         }
         config = {"configurable": {"thread_id": thread_id or oid}}
