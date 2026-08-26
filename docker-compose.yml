@@ -83,8 +83,14 @@ services:
       RZP_KEY_SECRET: ${RZP_KEY_SECRET:-}
       RZP_WEBHOOK_SECRET: ${RZP_WEBHOOK_SECRET:-nishchay_test_webhook_secret}
       RZP_WEBHOOK_SECRET_PREV: ${RZP_WEBHOOK_SECRET_PREV:-}
+      # docker compose substitutes these from .env, which is gitignored -
+      # the keys never enter the image or the repo.
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-nvidia/nemotron-3-nano-30b-a3b}
     depends_on:
       postgres: {condition: service_healthy}
       redis:    {condition: service_healthy}
