@@ -1,0 +1,55 @@
+{
+  "scenario": "D",
+  "title": "Bank ambiguity over a long weekend",
+  "order_id": "order_D4nishchay04",
+  "start": 1769177400,
+  "evaluate_at": 1769574600,
+  "ground_truth": "UNRESOLVED",
+  "note": "Friday 19:40. Saturday is a 4th Saturday, Sunday, then Republic Day. The window closes Tuesday, not Saturday. Razorpay documents that a bank can auto-refund without changing status, so this is unresolvable from the API - escalate with the RRN.",
+  "evidence": [],
+  "timeline": [
+    {
+      "at": 12,
+      "event_id": "evt_D_failed",
+      "event": "payment.failed",
+      "event_time": 1769177404,
+      "body": {
+        "entity": "event",
+        "account_id": "acc_NishchayTest01",
+        "event": "payment.failed",
+        "contains": [
+          "payment"
+        ],
+        "payload": {
+          "payment": {
+            "entity": {
+              "id": "pay_D1ambiguous",
+              "entity": "payment",
+              "amount": 234000,
+              "currency": "INR",
+              "status": "failed",
+              "order_id": "order_D4nishchay04",
+              "method": "netbanking",
+              "captured": false,
+              "amount_refunded": 0,
+              "description": "Order payment",
+              "email": "customer@example.com",
+              "contact": "+919000000000",
+              "notes": {},
+              "error_code": "GATEWAY_ERROR",
+              "error_description": "Payment failed at the bank",
+              "error_source": "bank",
+              "error_step": "payment_response",
+              "error_reason": "payment_failed",
+              "acquirer_data": {
+                "rrn": "230901495295"
+              },
+              "created_at": 1769177404
+            }
+          }
+        },
+        "created_at": 1769177404
+      }
+    }
+  ]
+}

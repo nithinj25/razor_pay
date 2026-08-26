@@ -1,0 +1,97 @@
+{
+  "scenario": "A",
+  "title": "In-app UPI retry (inverted delivery)",
+  "order_id": "order_A1nishchay01",
+  "start": 1768887000,
+  "evaluate_at": 1768887055,
+  "ground_truth": "ORDER_SETTLED",
+  "note": "Customer mistypes their UPI PIN, the TPAP offers an instant retry, the retry succeeds. Two attempts, one order, one debit. Last-write-wins on arrival order lands on FAILED and sends a link.",
+  "evidence": [],
+  "timeline": [
+    {
+      "at": 52,
+      "event_id": "evt_A_captured",
+      "event": "payment.captured",
+      "event_time": 1768887047,
+      "body": {
+        "entity": "event",
+        "account_id": "acc_NishchayTest01",
+        "event": "payment.captured",
+        "contains": [
+          "payment"
+        ],
+        "payload": {
+          "payment": {
+            "entity": {
+              "id": "pay_A2success",
+              "entity": "payment",
+              "amount": 234000,
+              "currency": "INR",
+              "status": "captured",
+              "order_id": "order_A1nishchay01",
+              "method": "upi",
+              "captured": true,
+              "amount_refunded": 0,
+              "description": "Order payment",
+              "email": "customer@example.com",
+              "contact": "+919000000000",
+              "notes": {},
+              "error_code": null,
+              "error_description": null,
+              "error_source": null,
+              "error_step": null,
+              "error_reason": null,
+              "acquirer_data": {
+                "rrn": "230901495295",
+                "upi_transaction_id": "AXI1a2b3c4d5e6f"
+              },
+              "created_at": 1768887047
+            }
+          }
+        },
+        "created_at": 1768887047
+      }
+    },
+    {
+      "at": 55,
+      "event_id": "evt_A_failed",
+      "event": "payment.failed",
+      "event_time": 1768887018,
+      "body": {
+        "entity": "event",
+        "account_id": "acc_NishchayTest01",
+        "event": "payment.failed",
+        "contains": [
+          "payment"
+        ],
+        "payload": {
+          "payment": {
+            "entity": {
+              "id": "pay_A1attempt",
+              "entity": "payment",
+              "amount": 234000,
+              "currency": "INR",
+              "status": "failed",
+              "order_id": "order_A1nishchay01",
+              "method": "upi",
+              "captured": false,
+              "amount_refunded": 0,
+              "description": "Order payment",
+              "email": "customer@example.com",
+              "contact": "+919000000000",
+              "notes": {},
+              "error_code": "BAD_REQUEST_ERROR",
+              "error_description": "Payment failed: incorrect UPI PIN entered",
+              "error_source": "customer",
+              "error_step": "payment_authentication",
+              "error_reason": "incorrect_upi_pin",
+              "acquirer_data": {},
+              "created_at": 1768887018
+            }
+          }
+        },
+        "created_at": 1768887018
+      }
+    }
+  ]
+}

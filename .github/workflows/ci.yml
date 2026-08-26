@@ -1,0 +1,55 @@
+name: ci
+
+# The two invariants (zero duplicate orders, zero false positives) are
+# correctness constraints, not metrics. `harness.demo` exits non-zero if
+# either moves, so a regression fails the build rather than quietly
+# degrading a dashboard.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt pyflakes
+
+      - name: Lint
+        run: python -m pyflakes core services harness web tests
+
+      # No API key is set, so the LLM paths take their deterministic
+      # fallbacks and the suite runs on ScriptedLLM throughout.
+      - name: Tests
+        run: pytest -q
+
+      - name: Chaos matrix
+        run: python -m harness.chaos --all
+
+      - name: Accuracy and invariants
+        run: python -m harness.demo --all
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results
+          path: .artifacts/results.json
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t nishchay:ci .
+      - name: Compose config is valid
+        run: docker compose config --quiet

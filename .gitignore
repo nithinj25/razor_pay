@@ -1,0 +1,31 @@
+# Secrets — never commit. Pitfall #9.
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Data / runtime
+*.db
+*.sqlite3
+pgdata/
+chdata/
+*.log
+.artifacts/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

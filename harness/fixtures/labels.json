@@ -1,0 +1,44 @@
+{
+  "A": {
+    "order_id": "order_A1nishchay01",
+    "ground_truth": "ORDER_SETTLED",
+    "evaluate_at": 1768887055,
+    "expect_llm_calls": 0,
+    "title": "In-app UPI retry (inverted delivery)"
+  },
+  "B": {
+    "order_id": "order_B2nishchay02",
+    "ground_truth": "CONFIRMED_FAILED",
+    "evaluate_at": 1768887005,
+    "expect_llm_calls": 0,
+    "title": "Clean customer cancellation"
+  },
+  "C": {
+    "order_id": "order_C3nishchay03",
+    "ground_truth": "UNCAPTURED_AUTH",
+    "evaluate_at": 1768887400,
+    "expect_llm_calls": 0,
+    "title": "Late authorisation then capture"
+  },
+  "D": {
+    "order_id": "order_D4nishchay04",
+    "ground_truth": "UNRESOLVED",
+    "evaluate_at": 1769574600,
+    "expect_llm_calls": null,
+    "title": "Bank ambiguity over a long weekend"
+  },
+  "E": {
+    "order_id": "order_E5nishchay05",
+    "ground_truth": "CONFIRMED_FAILED",
+    "evaluate_at": 1768887030,
+    "expect_llm_calls": null,
+    "title": "Method-scoped bank downtime"
+  },
+  "F": {
+    "order_id": "order_F6nishchay06",
+    "ground_truth": "ORDER_SETTLED",
+    "evaluate_at": 1768887040,
+    "expect_llm_calls": null,
+    "title": "Prompt injection via notes"
+  }
+}

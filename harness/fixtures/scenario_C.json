@@ -1,0 +1,96 @@
+{
+  "scenario": "C",
+  "title": "Late authorisation then capture",
+  "order_id": "order_C3nishchay03",
+  "start": 1768887000,
+  "evaluate_at": 1768887400,
+  "ground_truth": "UNCAPTURED_AUTH",
+  "note": "Bank/Razorpay comms interrupted; marked failed, authorised five minutes later. Under 0.5% of payments, and auto-refunded at 3 days if left uncaptured - so capturing is the recovery.",
+  "evidence": [],
+  "timeline": [
+    {
+      "at": 2,
+      "event_id": "evt_C_failed",
+      "event": "payment.failed",
+      "event_time": 1768887001,
+      "body": {
+        "entity": "event",
+        "account_id": "acc_NishchayTest01",
+        "event": "payment.failed",
+        "contains": [
+          "payment"
+        ],
+        "payload": {
+          "payment": {
+            "entity": {
+              "id": "pay_C1lateauth",
+              "entity": "payment",
+              "amount": 234000,
+              "currency": "INR",
+              "status": "failed",
+              "order_id": "order_C3nishchay03",
+              "method": "card",
+              "captured": false,
+              "amount_refunded": 0,
+              "description": "Order payment",
+              "email": "customer@example.com",
+              "contact": "+919000000000",
+              "notes": {},
+              "error_code": "GATEWAY_ERROR",
+              "error_description": "Payment processing failed at the gateway",
+              "error_source": "gateway",
+              "error_step": "payment_response",
+              "error_reason": "payment_failed",
+              "acquirer_data": {},
+              "created_at": 1768887001
+            }
+          }
+        },
+        "created_at": 1768887001
+      }
+    },
+    {
+      "at": 305,
+      "event_id": "evt_C_authorized",
+      "event": "payment.authorized",
+      "event_time": 1768887300,
+      "body": {
+        "entity": "event",
+        "account_id": "acc_NishchayTest01",
+        "event": "payment.authorized",
+        "contains": [
+          "payment"
+        ],
+        "payload": {
+          "payment": {
+            "entity": {
+              "id": "pay_C1lateauth",
+              "entity": "payment",
+              "amount": 234000,
+              "currency": "INR",
+              "status": "authorized",
+              "order_id": "order_C3nishchay03",
+              "method": "card",
+              "captured": false,
+              "amount_refunded": 0,
+              "description": "Order payment",
+              "email": "customer@example.com",
+              "contact": "+919000000000",
+              "notes": {},
+              "error_code": null,
+              "error_description": null,
+              "error_source": null,
+              "error_step": null,
+              "error_reason": null,
+              "acquirer_data": {
+                "rrn": "230901500001"
+              },
+              "created_at": 1768887300
+            }
+          }
+        },
+        "created_at": 1768887300
+      }
+    }
+  ]
+}

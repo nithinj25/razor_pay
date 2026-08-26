@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nishchay — Recovery Console</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<style>
+  /* Sized for a 1080p screen capture: nothing below 14px, body at 17px.
+     A reviewer watching the video should never have to squint. */
+  :root { color-scheme: dark; }
+  body { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace; }
+  .row-in { animation: slide .25s ease-out; }
+  @keyframes slide { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:none} }
+  .pulse-red { animation: pr 1.1s ease-in-out infinite; }
+  @keyframes pr { 0%,100%{background-color:rgb(127 29 29/.35)} 50%{background-color:rgb(127 29 29/.7)} }
+  ::-webkit-scrollbar { width:10px;height:10px } ::-webkit-scrollbar-thumb { background:#3f3f46;border-radius:5px }
+</style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 text-[17px] leading-relaxed">
+<div x-data="app()" x-init="init()" class="max-w-[1700px] mx-auto p-5">
+
+  <!-- ── header ─────────────────────────────────────────────── -->
+  <header class="flex flex-wrap items-center gap-4 mb-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">निश्चय <span class="text-zinc-500 font-normal">nishchay</span></h1>
+      <p class="text-sm text-zinc-500">Resolve the payment's true status before acting on it.</p>
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <template x-for="t in tabs" :key="t.id">
+        <button @click="tab = t.id; load()"
+                :class="tab===t.id ? 'bg-zinc-100 text-zinc-900 font-bold' : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200'"
+                class="px-4 py-2 rounded text-sm" x-text="t.label"></button>
+      </template>
+    </div>
+  </header>
+
+  <!-- scenario + speed, shared by screens 1 and 2 -->
+  <div class="flex flex-wrap items-center gap-3 mb-4" x-show="tab==='console' || tab==='timeline'">
+    <select x-model="scenario" @change="onScenario()"
+            class="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm">
+      <template x-for="s in scenarios" :key="s.key">
+        <option :value="s.key" x-text="s.key + ' — ' + s.title"></option>
+      </template>
+    </select>
+
+    <template x-if="tab==='console'">
+      <div class="flex items-center gap-3">
+        <div class="flex rounded overflow-hidden border border-zinc-700">
+          <template x-for="sp in [1,4,16]" :key="sp">
+            <button @click="speed = sp"
+                    :class="speed===sp ? 'bg-amber-500 text-black font-bold' : 'bg-zinc-900 text-zinc-400'"
+                    class="px-3 py-2 text-sm" x-text="sp + 'x'"></button>
+          </template>
+        </div>
+        <button @click="running ? stop() : start()"
+                :class="running ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'"
+                class="px-5 py-2 rounded font-bold text-sm" x-text="running ? 'STOP' : 'RUN'"></button>
+        <span class="px-2 py-1 rounded text-xs bg-amber-500/15 text-amber-300 border border-amber-500/30"
+              x-text="'clock ' + speed + 'x — compressed, verdicts unchanged'"></span>
+      </div>
+    </template>
+    <p class="w-full text-xs text-zinc-500" x-text="note"></p>
+  </div>
+
+  <!-- ══════════ SCREEN 1 — live recovery console ══════════ -->
+  <div x-show="tab==='console'">
+    <section class="border border-zinc-800 rounded-lg overflow-hidden mb-4">
+      <div class="bg-zinc-900 px-4 py-2 text-xs uppercase tracking-widest text-zinc-400 flex justify-between">
+        <span>event stream — as delivered</span><span x-text="orderId"></span>
+      </div>
+      <div class="divide-y divide-zinc-900 max-h-48 overflow-y-auto">
+        <template x-for="(e,i) in events" :key="i">
+          <div class="px-4 py-2 flex flex-wrap items-center gap-4 text-sm row-in"
+               :class="e.inverted ? 'bg-amber-950/40' : ''">
+            <span class="text-zinc-500 w-20" x-text="'T+' + String(e.clock).padStart(2,'0') + 's'"></span>
+            <span class="w-44 font-semibold"
+                  :class="e.event_type.includes('captured') ? 'text-emerald-400'
+                        : e.event_type.includes('failed') ? 'text-red-400' : 'text-sky-400'"
+                  x-text="e.event_type"></span>
+            <span class="text-zinc-400 w-40" x-text="e.payment_id"></span>
+            <span class="text-zinc-500" x-text="'event_time +' + e.event_time + 's'"></span>
+            <span class="text-zinc-600" x-text="'received +' + e.received_at + 's'"></span>
+            <template x-if="e.inverted">
+              <span class="ml-auto text-amber-400 font-bold">⚠ older event, delivered later</span>
+            </template>
+          </div>
+        </template>
+        <template x-if="!events.length">
+          <div class="px-4 py-6 text-zinc-600 text-sm">Press RUN to replay this scenario.</div>
+        </template>
+      </div>
+    </section>
+
+    <div class="grid md:grid-cols-2 gap-4">
+      <section class="border border-red-900/60 rounded-lg overflow-hidden">
+        <div class="bg-red-950/60 px-4 py-2 text-xs uppercase tracking-widest text-red-300">
+          baseline — mutable status, last write wins
+        </div>
+        <div class="p-4 space-y-3 min-h-[230px]">
+          <div class="flex items-baseline gap-3">
+            <span class="text-zinc-500 text-sm">status field</span>
+            <span class="text-2xl font-bold" x-text="baseline.status || '—'"></span>
+            <span class="text-xs text-zinc-600">(stored, overwritten on arrival)</span>
+          </div>
+          <template x-for="(a,i) in baseline.actions" :key="i">
+            <div class="text-red-300 text-sm">→ <span x-text="a"></span></div>
+          </template>
+          <template x-if="baseline.duplicates">
+            <div class="rounded px-3 py-2 pulse-red border border-red-700">
+              <div class="font-bold text-red-200">⚠ order_B created — DUPLICATE</div>
+              <div class="text-red-300 text-sm" x-text="'₹' + inr(baseline.duplicate_rupees) + ' charged twice'"></div>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <section class="border border-emerald-900/60 rounded-lg overflow-hidden">
+        <div class="bg-emerald-950/60 px-4 py-2 text-xs uppercase tracking-widest text-emerald-300">
+          nishchay — fold(observations, now)
+        </div>
+        <div class="p-4 space-y-3 min-h-[230px]">
+          <template x-for="(f,i) in (decision.fold||[])" :key="i">
+            <div class="text-zinc-400 flex gap-3 text-sm">
+              <span class="w-40" x-text="f.payment_id"></span>
+              <span class="w-36" x-text="f.event_type.replace('payment.','')"></span>
+              <span class="text-zinc-600" x-text="'@ +' + f.event_time + 's'"></span>
+            </div>
+          </template>
+          <div class="flex items-baseline gap-3 pt-1">
+            <span class="text-zinc-500 text-sm">verdict</span>
+            <span class="text-2xl font-bold" :class="vColour(decision.verdict)" x-text="decision.verdict || '—'"></span>
+            <span class="text-zinc-500 text-sm" x-text="decision.confidence!==undefined ? decision.confidence.toFixed(2) : ''"></span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-zinc-500 text-sm">action</span>
+            <span class="font-bold px-2 py-0.5 rounded text-sm" :class="aColour(decision.action)" x-text="decision.action || '—'"></span>
+            <span class="text-xs text-zinc-500" x-text="decision.status"></span>
+          </div>
+          <div class="text-xs text-zinc-500 space-y-0.5">
+            <template x-for="(r,i) in (decision.rules_fired||[])" :key="i">
+              <div x-text="'rule: ' + r"></div>
+            </template>
+            <div x-text="'LLM calls this step: ' + (decision.llm_calls ?? 0)"></div>
+          </div>
+          <template x-if="decision.veto_reason && !decision.gate_allowed">
+            <div class="rounded px-3 py-2 bg-amber-950/50 border border-amber-800 text-sm">
+              <span class="font-bold text-amber-300">VETOED</span>
+              <div class="text-amber-200/80 text-xs mt-1" x-text="decision.veto_reason"></div>
+            </div>
+          </template>
+          <template x-for="(d,i) in (decision.degraded||[])" :key="i">
+            <div class="text-xs text-zinc-500" x-text="'degraded: ' + d"></div>
+          </template>
+        </div>
+      </section>
+    </div>
+
+    <section class="mt-4 border border-zinc-800 rounded-lg bg-zinc-900/60 px-5 py-4 flex flex-wrap gap-8 items-center">
+      <div class="text-xs uppercase tracking-widest text-zinc-500">tally</div>
+      <div>
+        <div class="text-xs text-zinc-500">baseline duplicated</div>
+        <div class="text-2xl font-bold text-red-400" x-text="'₹' + inr(tally.baseline)"></div>
+      </div>
+      <div>
+        <div class="text-xs text-zinc-500">nishchay duplicated</div>
+        <div class="text-2xl font-bold text-emerald-400" x-text="'₹' + inr(tally.nishchay)"></div>
+      </div>
+      <div>
+        <div class="text-xs text-zinc-500">ground truth</div>
+        <div class="text-lg font-bold text-zinc-300" x-text="groundTruth || '—'"></div>
+      </div>
+      <template x-if="finished">
+        <div class="ml-auto px-3 py-1.5 rounded font-bold text-sm"
+             :class="tally.nishchay===0 ? 'bg-emerald-600 text-black' : 'bg-red-600'"
+             x-text="tally.nishchay===0 ? '✓ no duplicate created' : '✗ INVARIANT VIOLATED'"></div>
+      </template>
+    </section>
+  </div>
+
+  <!-- ══════════ SCREEN 2 — order timeline ══════════ -->
+  <div x-show="tab==='timeline'" class="space-y-4">
+    <template x-if="timeline.clocks">
+      <section class="border border-amber-900/50 rounded-lg overflow-hidden">
+        <div class="bg-amber-950/40 px-4 py-2 text-xs uppercase tracking-widest text-amber-300">
+          RBI T+1 window — banking days vs naive arithmetic (E14)
+        </div>
+        <div class="p-4 grid sm:grid-cols-3 gap-4 text-sm">
+          <div><div class="text-zinc-500 text-xs">failure</div><div x-text="timeline.clocks.failure"></div></div>
+          <div><div class="text-zinc-500 text-xs">naive now + 86400</div>
+               <div class="text-red-400" x-text="timeline.clocks.naive_deadline"></div></div>
+          <div><div class="text-zinc-500 text-xs">actual banking-day deadline</div>
+               <div class="text-emerald-400" x-text="timeline.clocks.banking_deadline"></div></div>
+        </div>
+        <div class="px-4 pb-4 text-xs text-zinc-500"
+             x-text="timeline.clocks.ratio + '× the naive window. Acting on the naive deadline charges the customer twice.'"></div>
+      </section>
+    </template>
+
+    <section class="border border-zinc-800 rounded-lg overflow-hidden">
+      <div class="bg-zinc-900 px-4 py-2 text-xs uppercase tracking-widest text-zinc-400">
+        verdict recomputed at every step — proof it is derived, not stored
+      </div>
+      <div class="divide-y divide-zinc-900">
+        <template x-for="(r,i) in (timeline.rows||[])" :key="i">
+          <div class="p-4" :class="r.inverted ? 'bg-amber-950/20' : ''">
+            <div class="flex flex-wrap items-center gap-4 text-sm mb-2">
+              <span class="text-zinc-500 w-24" x-text="'T+' + r.clock + 's'"></span>
+              <span class="font-semibold w-52" x-text="r.event_type"></span>
+              <span class="text-zinc-400 w-40" x-text="r.payment_id || ''"></span>
+              <template x-if="r.event_time_offset !== null">
+                <span class="text-xs text-zinc-500">
+                  event_time <span class="text-zinc-300" x-text="'+' + r.event_time_offset + 's'"></span>
+                  · received <span class="text-zinc-300" x-text="'+' + r.received_at_offset + 's'"></span>
+                </span>
+              </template>
+              <template x-if="r.inverted">
+                <span class="text-amber-400 text-xs font-bold">⚠ inversion</span>
+              </template>
+            </div>
+            <div class="flex flex-wrap items-center gap-4 pl-24">
+              <span class="text-lg font-bold" :class="vColour(r.verdict)" x-text="r.verdict"></span>
+              <span class="text-zinc-500 text-sm" x-text="r.confidence.toFixed(2)"></span>
+              <span class="px-2 py-0.5 rounded text-xs font-bold" :class="aColour(r.action)" x-text="r.action"></span>
+              <span class="text-xs text-zinc-500" x-text="'paid ' + r.amount_paid + ' / due ' + r.amount_due + ' paise'"></span>
+              <template x-if="r.any_sibling_non_terminal">
+                <span class="text-xs text-amber-400">sibling still in play → I3 blocks a link</span>
+              </template>
+            </div>
+            <div class="pl-24 mt-1 text-xs text-zinc-600">
+              <template x-for="(x,j) in r.rules_fired" :key="j"><span class="mr-3" x-text="x"></span></template>
+            </div>
+            <template x-if="r.note">
+              <div class="pl-24 mt-1 text-xs text-sky-400" x-text="r.note"></div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <template x-if="(timeline.evidence||[]).length">
+      <section class="border border-zinc-800 rounded-lg overflow-hidden">
+        <div class="bg-zinc-900 px-4 py-2 text-xs uppercase tracking-widest text-zinc-400">
+          evidence — source, confidence, provenance
+        </div>
+        <div class="divide-y divide-zinc-900">
+          <template x-for="(e,i) in timeline.evidence" :key="i">
+            <div class="px-4 py-2 flex flex-wrap gap-4 text-sm">
+              <span class="w-32 font-semibold" :class="e.available ? 'text-emerald-400' : 'text-red-400'" x-text="e.source"></span>
+              <span class="w-16 text-zinc-400" x-text="e.confidence.toFixed(2)"></span>
+              <span class="text-zinc-500 text-xs" x-text="e.provenance"></span>
+              <span class="text-zinc-600 text-xs" x-text="JSON.stringify(e.value)"></span>
+            </div>
+          </template>
+        </div>
+      </section>
+    </template>
+  </div>
+
+  <!-- ══════════ SCREEN 3 — exception queue ══════════ -->
+  <div x-show="tab==='exceptions'" class="space-y-4">
+    <p class="text-sm text-zinc-500">
+      Cases the system refused to resolve automatically. Each carries the identifiers
+      a human can act on — <span class="text-zinc-300">RRN first</span>, because that is
+      what ties a payment to the customer's bank statement.
+    </p>
+    <template x-for="(c,i) in (exceptions.cards||[])" :key="i">
+      <section class="border border-sky-900/60 rounded-lg overflow-hidden">
+        <div class="bg-sky-950/50 px-4 py-2 flex flex-wrap items-center gap-4">
+          <span class="text-xs uppercase tracking-widest text-sky-300" x-text="'scenario ' + c.scenario"></span>
+          <span class="font-bold" x-text="c.order_id"></span>
+          <span class="text-xl font-bold text-zinc-100" x-text="'₹' + inr(c.amount_rupees)"></span>
+          <span class="px-2 py-0.5 rounded text-xs font-bold bg-zinc-800 text-zinc-300" x-text="c.verdict"></span>
+          <button @click="copyPacket(c)" class="ml-auto px-3 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-xs font-bold">
+            <span x-text="copied===c.order_id ? '✓ copied' : 'copy evidence packet'"></span>
+          </button>
+        </div>
+        <div class="p-4 grid md:grid-cols-2 gap-5 text-sm">
+          <div class="space-y-2">
+            <div class="rounded bg-zinc-900 border border-zinc-800 p-3">
+              <div class="text-xs text-zinc-500 uppercase tracking-widest mb-1">actionable identifiers</div>
+              <div class="flex gap-3"><span class="text-zinc-500 w-16">RRN</span>
+                   <span class="text-emerald-300 font-bold text-lg" x-text="c.rrn || '—'"></span></div>
+              <div class="flex gap-3"><span class="text-zinc-500 w-16">UPI txn</span>
+                   <span class="text-zinc-300" x-text="c.upi_transaction_id || '—'"></span></div>
+              <div class="flex gap-3"><span class="text-zinc-500 w-16">payment</span>
+                   <span class="text-zinc-400" x-text="c.payment_id"></span></div>
+            </div>
+            <div class="text-xs text-zinc-500 space-y-1">
+              <div>failed <span class="text-zinc-300" x-text="c.failed_at"></span></div>
+              <div>window closed <span class="text-zinc-300" x-text="c.window_closed"></span></div>
+              <div>age <span class="text-zinc-300" x-text="c.age_banking_days + ' banking day(s)'"></span>
+                   · <span x-text="c.method"></span> · <span x-text="c.error_source + '/' + c.error_step"></span></div>
+            </div>
+          </div>
+          <div class="space-y-3">
+            <div>
+              <div class="text-xs text-zinc-500 uppercase tracking-widest mb-1">what was checked</div>
+              <template x-for="(w,j) in c.what_was_checked" :key="j">
+                <div class="text-xs text-zinc-400">✓ <span x-text="w"></span></div>
+              </template>
+            </div>
+            <div>
+              <div class="text-xs text-zinc-500 uppercase tracking-widest mb-1">what is missing</div>
+              <template x-for="(w,j) in c.what_is_missing" :key="j">
+                <div class="text-xs text-amber-400">? <span x-text="w"></span></div>
+              </template>
+            </div>
+            <div>
+              <div class="text-xs text-zinc-500 uppercase tracking-widest mb-1">suggested next step</div>
+              <div class="text-xs text-sky-300" x-text="c.suggested_next_step"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </template>
+    <template x-if="exceptions.count === 0">
+      <div class="text-zinc-600 text-sm">No unresolved cases.</div>
+    </template>
+  </div>
+
+  <!-- ══════════ SCREEN 4 — metrics ══════════ -->
+  <div x-show="tab==='metrics'" class="space-y-4">
+    <template x-if="metrics.error">
+      <div class="border border-amber-800 bg-amber-950/30 rounded-lg p-4 text-sm text-amber-300"
+           x-text="metrics.error"></div>
+    </template>
+
+    <template x-if="metrics.headline">
+      <div class="grid md:grid-cols-2 gap-4">
+        <section class="border border-zinc-800 rounded-lg overflow-hidden">
+          <div class="bg-zinc-900 px-4 py-2 text-xs uppercase tracking-widest text-zinc-400">
+            baseline vs nishchay
+          </div>
+          <div class="p-4 space-y-4">
+            <template x-for="(b,i) in bars()" :key="i">
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-zinc-400" x-text="b.label"></span>
+                  <span><span class="text-red-400 font-bold" x-text="b.before"></span>
+                        <span class="text-zinc-600 mx-2">→</span>
+                        <span class="text-emerald-400 font-bold" x-text="b.after"></span></span>
+                </div>
+                <div class="flex gap-1 h-6">
+                  <div class="bg-red-600/70 rounded-l" :style="`width:${b.pctBefore}%`"></div>
+                  <div class="bg-emerald-600/70" :style="`width:${b.pctAfter}%`"></div>
+                </div>
+              </div>
+            </template>
+            <div class="pt-2 border-t border-zinc-800 text-sm space-y-1">
+              <div class="flex justify-between"><span class="text-zinc-500">verdict accuracy</span>
+                   <span class="font-bold text-emerald-400" x-text="metrics.headline.accuracy"></span></div>
+              <div class="flex justify-between"><span class="text-zinc-500">p95 time to verdict</span>
+                   <span class="font-bold" x-text="metrics.headline.p95_latency_ms + ' ms'"></span></div>
+              <div class="flex justify-between"><span class="text-zinc-500">LLM calls, 6 scenarios</span>
+                   <span class="font-bold" x-text="metrics.headline.llm_calls"></span></div>
+              <div class="flex justify-between"><span class="text-zinc-500">escalated to a human</span>
+                   <span class="font-bold text-sky-400" x-text="metrics.headline.escalated"></span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="border border-zinc-800 rounded-lg overflow-hidden">
+          <div class="bg-zinc-900 px-4 py-2 text-xs uppercase tracking-widest text-zinc-400">
+            confusion matrix — ground truth × verdict
+          </div>
+          <div class="p-4 overflow-x-auto">
+            <table class="text-xs w-full">
+              <thead><tr><th class="text-left p-2 text-zinc-500">truth \ verdict</th>
+                <template x-for="g in cmCols()" :key="g">
+                  <th class="p-2 text-zinc-400 font-normal" x-text="g.slice(0,14)"></th>
+                </template></tr></thead>
+              <tbody>
+                <template x-for="t in cmRows()" :key="t">
+                  <tr><td class="p-2 text-zinc-400" x-text="t.slice(0,16)"></td>
+                    <template x-for="g in cmCols()" :key="g">
+                      <td class="p-2 text-center font-bold rounded"
+                          :class="cmVal(t,g) ? (t===g ? 'bg-emerald-600/40 text-emerald-200' : 'bg-red-600/50 text-red-100') : 'text-zinc-700'"
+                          x-text="cmVal(t,g) || '·'"></td>
+                    </template>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <p class="mt-3 text-xs text-zinc-500">Off-diagonal cells are exceptions we must be able to name.</p>
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <template x-if="(metrics.vetoes||[]).length">
+      <section class="border border-zinc-800 rounded-lg overflow-hidden">
+        <div class="bg-zinc-900 px-4 py-2 flex items-center gap-3">
+          <span class="text-xs uppercase tracking-widest text-zinc-400">veto log — the audit trail</span>
+          <select x-model="vetoFilter" class="ml-auto bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs">
+            <option value="">all rules</option>
+            <template x-for="r in vetoRules()" :key="r"><option :value="r" x-text="r"></option></template>
+          </select>
+        </div>
+        <div class="divide-y divide-zinc-900 max-h-96 overflow-y-auto">
+          <template x-for="(v,i) in filteredVetoes()" :key="i">
+            <div class="px-4 py-2 text-sm flex flex-wrap gap-4">
+              <span class="text-amber-400 font-bold w-16" x-text="v.rule"></span>
+              <span class="text-zinc-400 w-48" x-text="v.action"></span>
+              <span class="text-zinc-600 w-40" x-text="v.order_id"></span>
+              <span class="text-zinc-500 flex-1" x-text="v.reason"></span>
+            </div>
+          </template>
+        </div>
+      </section>
+    </template>
+
+    <template x-if="(metrics.scenarios||[]).length">
+      <section class="border border-zinc-800 rounded-lg overflow-hidden">
+        <div class="bg-zinc-900 px-4 py-2 text-xs uppercase tracking-widest text-zinc-400">per scenario</div>
+        <div class="divide-y divide-zinc-900">
+          <template x-for="(r,i) in metrics.scenarios" :key="i">
+            <div class="px-4 py-2 flex flex-wrap items-center gap-4 text-sm">
+              <span class="font-bold w-6" x-text="r.scenario"></span>
+              <span class="w-64 text-zinc-400" x-text="r.title"></span>
+              <span class="w-40" :class="r.correct ? 'text-emerald-400' : 'text-red-400'" x-text="r.verdict"></span>
+              <span class="w-16 text-zinc-500" x-text="r.confidence.toFixed(2)"></span>
+              <span class="w-48 px-2 py-0.5 rounded text-xs font-bold" :class="aColour(r.action)" x-text="r.action"></span>
+              <span class="text-xs text-zinc-500" x-text="'LLM ' + r.llm_calls"></span>
+              <span class="text-xs" :class="r.duplicate_orders ? 'text-red-400 font-bold' : 'text-zinc-600'"
+                    x-text="'dupes ' + r.duplicate_orders"></span>
+            </div>
+          </template>
+        </div>
+      </section>
+    </template>
+  </div>
+</div>
+
+<script>
+function app() {
+  return {
+    tabs: [
+      {id:'console',    label:'1 · Live console'},
+      {id:'timeline',   label:'2 · Order timeline'},
+      {id:'exceptions', label:'3 · Exception queue'},
+      {id:'metrics',    label:'4 · Metrics'},
+    ],
+    tab: 'console',
+    scenarios: [], scenario: 'A', speed: 4, running: false, finished: false,
+    events: [], baseline: {status:'', actions:[], duplicates:0, duplicate_rupees:0},
+    decision: {fold:[], rules_fired:[], degraded:[]},
+    tally: {baseline:0, nishchay:0},
+    timeline: {}, exceptions: {}, metrics: {}, vetoFilter: '', copied: '',
+    orderId: '', note: '', groundTruth: '', es: null,
+
+    async init() {
+      this.scenarios = await (await fetch('/api/scenarios')).json();
+      this.applyMeta();
+    },
+    applyMeta() {
+      const s = this.scenarios.find(x => x.key === this.scenario);
+      if (s) { this.orderId = s.order_id; this.note = s.note; this.groundTruth = s.ground_truth; }
+    },
+    onScenario() { this.applyMeta(); this.reset(); this.load(); },
+
+    async load() {
+      if (this.tab === 'timeline') {
+        this.timeline = await (await fetch(`/api/timeline?scenario=${this.scenario}`)).json();
+      } else if (this.tab === 'exceptions') {
+        this.exceptions = await (await fetch('/api/exceptions')).json();
+      } else if (this.tab === 'metrics') {
+        const r = await fetch('/api/metrics');
+        this.metrics = await r.json();
+      }
+    },
+
+    reset() {
+      this.stop();
+      this.events = []; this.finished = false;
+      this.baseline = {status:'', actions:[], duplicates:0, duplicate_rupees:0};
+      this.decision = {fold:[], rules_fired:[], degraded:[]};
+      this.tally = {baseline:0, nishchay:0};
+      this.applyMeta();
+    },
+    start() {
+      this.reset(); this.running = true;
+      this.es = new EventSource(`/api/stream?scenario=${this.scenario}&speed=${this.speed}`);
+      this.es.addEventListener('start', e => { const d = JSON.parse(e.data); this.note = d.note; this.groundTruth = d.ground_truth; });
+      this.es.addEventListener('observation', e => this.events.push(JSON.parse(e.data)));
+      this.es.addEventListener('baseline', e => {
+        this.baseline = JSON.parse(e.data);
+        this.tally.baseline = this.baseline.duplicate_rupees;
+      });
+      this.es.addEventListener('decision', e => this.decision = JSON.parse(e.data));
+      this.es.addEventListener('done', e => {
+        const d = JSON.parse(e.data);
+        this.tally = {baseline: d.baseline_rupees, nishchay: d.nishchay_rupees};
+        this.finished = true; this.stop();
+      });
+      this.es.onerror = () => this.stop();
+    },
+    stop() { if (this.es) { this.es.close(); this.es = null; } this.running = false; },
+
+    copyPacket(c) {
+      navigator.clipboard.writeText(JSON.stringify(c, null, 2));
+      this.copied = c.order_id;
+      setTimeout(() => this.copied = '', 1800);
+    },
+
+    cmRows() { return [...new Set((this.metrics.confusion||[]).map(x => x.ground_truth))].sort(); },
+    cmCols() { return [...new Set((this.metrics.confusion||[]).map(x => x.verdict))].sort(); },
+    cmVal(t,g) { const r = (this.metrics.confusion||[]).find(x => x.ground_truth===t && x.verdict===g); return r ? r.n : 0; },
+
+    vetoRules() { return [...new Set((this.metrics.vetoes||[]).map(v => v.rule))].sort(); },
+    filteredVetoes() { return (this.metrics.vetoes||[]).filter(v => !this.vetoFilter || v.rule === this.vetoFilter); },
+
+    bars() {
+      const h = this.metrics.headline; if (!h) return [];
+      const pair = (label, before, after, fmt = x => x) => {
+        const max = Math.max(before, after, 1);
+        return {label, before: fmt(before), after: fmt(after),
+                pctBefore: (before/max)*50, pctAfter: (after/max)*50};
+      };
+      return [
+        pair('Duplicate orders created', h.baseline_duplicate_orders, h.nishchay_duplicate_orders),
+        pair('Money double-charged (₹)', h.baseline_duplicate_rupees, 0, x => '₹' + this.inr(x)),
+        pair('False positives', h.baseline_duplicate_orders, h.nishchay_false_positives),
+      ];
+    },
+
+    inr(n) { return (n||0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}); },
+    vColour(v) { return {
+      ORDER_SETTLED:'text-emerald-400', CONFIRMED_FAILED:'text-sky-400',
+      UNCAPTURED_AUTH:'text-violet-400', PENDING_TAT:'text-amber-400',
+      DUPLICATE_RISK:'text-red-400', UNRESOLVED:'text-zinc-400'}[v] || 'text-zinc-300'; },
+    aColour(a) {
+      if (a === 'NOOP') return 'bg-amber-500/20 text-amber-300';
+      if (a === 'ESCALATE' || a === 'HOLD') return 'bg-sky-500/20 text-sky-300';
+      if (a) return 'bg-emerald-500/20 text-emerald-300';
+      return 'bg-zinc-800 text-zinc-400';
+    },
+  };
+}
+</script>
+</body>
+</html>

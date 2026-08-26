@@ -1,0 +1,117 @@
+name: nishchay
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nishchay
+      POSTGRES_PASSWORD: nishchay
+      POSTGRES_DB: nishchay
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nishchay -d nishchay"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:29092,OUTSIDE://localhost:19092
+    ports: ["19092:19092"]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    ports: ["8123:8123"]
+    environment:
+      CLICKHOUSE_USER: nishchay
+      CLICKHOUSE_PASSWORD: nishchay
+      CLICKHOUSE_DB: nishchay
+      CLICKHOUSE_SKIP_USER_SETUP: 1
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    volumes:
+      - chdata:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---- application ----------------------------------------------------
+  # `docker compose up` must bring up the whole system, not just its
+  # dependencies. Each service waits for its backing stores to be healthy
+  # so a cold start cannot race the database.
+
+  ingress:
+    build: .
+    command: uvicorn services.ingress.main:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    environment: &app_env
+      POSTGRES_DSN: postgresql://nishchay:nishchay@postgres:5432/nishchay
+      REDIS_URL: redis://redis:6379
+      KAFKA_BOOTSTRAP: redpanda:29092
+      CLICKHOUSE_URL: http://clickhouse:8123
+      RZP_KEY_ID: ${RZP_KEY_ID:-rzp_test_placeholder}
+      RZP_KEY_SECRET: ${RZP_KEY_SECRET:-}
+      RZP_WEBHOOK_SECRET: ${RZP_WEBHOOK_SECRET:-nishchay_test_webhook_secret}
+      RZP_WEBHOOK_SECRET_PREV: ${RZP_WEBHOOK_SECRET_PREV:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+      redpanda: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: .
+    command: python -m services.worker
+    environment: *app_env
+    depends_on:
+      postgres:   {condition: service_healthy}
+      redis:      {condition: service_healthy}
+      redpanda:   {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+    restart: unless-stopped
+
+  console:
+    build: .
+    command: uvicorn web.main:app --host 0.0.0.0 --port 8080
+    ports: ["8080:8080"]
+    environment: *app_env
+    depends_on:
+      postgres: {condition: service_healthy}
+
+volumes:
+  pgdata:
+  chdata:

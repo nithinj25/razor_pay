@@ -1,0 +1,80 @@
+{
+  "scenario": "E",
+  "title": "Method-scoped bank downtime",
+  "order_id": "order_E5nishchay05",
+  "start": 1768887000,
+  "evaluate_at": 1768887030,
+  "ground_truth": "CONFIRMED_FAILED",
+  "note": "HDFC netbanking is down and the failure is at payment_initiation, so the bank was never asked to debit. A netbanking link would fail again; the customer has paid by UPI twice before.",
+  "evidence": [
+    {
+      "source": "downtime",
+      "value": {
+        "active": true,
+        "method": "netbanking",
+        "bank": "HDFC",
+        "severity": "high",
+        "scope": "method"
+      },
+      "confidence": 0.9,
+      "provenance": "GET /v1/payments/downtimes",
+      "available": true
+    },
+    {
+      "source": "history",
+      "value": {
+        "successful_methods": [
+          "upi",
+          "upi"
+        ],
+        "preferred_channel": "WHATSAPP"
+      },
+      "confidence": 0.8,
+      "provenance": "GET /v1/customers/:id/payments",
+      "available": true
+    }
+  ],
+  "timeline": [
+    {
+      "at": 6,
+      "event_id": "evt_E_failed",
+      "event": "payment.failed",
+      "event_time": 1768887004,
+      "body": {
+        "entity": "event",
+        "account_id": "acc_NishchayTest01",
+        "event": "payment.failed",
+        "contains": [
+          "payment"
+        ],
+        "payload": {
+          "payment": {
+            "entity": {
+              "id": "pay_E1downtime",
+              "entity": "payment",
+              "amount": 234000,
+              "currency": "INR",
+              "status": "failed",
+              "order_id": "order_E5nishchay05",
+              "method": "netbanking",
+              "captured": false,
+              "amount_refunded": 0,
+              "description": "Order payment",
+              "email": "customer@example.com",
+              "contact": "+919000000000",
+              "notes": {},
+              "error_code": "GATEWAY_ERROR",
+              "error_description": "Bank netbanking unavailable",
+              "error_source": "bank",
+              "error_step": "payment_initiation",
+              "error_reason": "payment_failed",
+              "acquirer_data": {},
+              "created_at": 1768887004
+            }
+          }
+        },
+        "created_at": 1768887004
+      }
+    }
+  ]
+}
