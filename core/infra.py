@@ -207,3 +207,35 @@ class Infra:
             if closer:
                 with contextlib.suppress(Exception):
                     await closer()
+
+
+def use_psycopg_compatible_loop() -> bool:
+    """Windows only: switch off the ProactorEventLoop before any loop exists.
+
+    psycopg refuses to run in async mode on Windows' default
+    ProactorEventLoop, and LangGraph's Postgres checkpointer is built on
+    psycopg. Left alone, the resolver silently degrades to an in-memory
+    checkpointer on a Windows dev box - which is precisely where chaos 5
+    ("kill the resolver mid-flight, resume, identical verdict") gets
+    demonstrated, so the degradation would hide the thing being shown.
+
+    In the containers this is a no-op: they run Linux, where the default
+    loop is already compatible.
+
+    Must be called before the first event loop is created. Returns True
+    if the policy was changed.
+    """
+    import sys
+
+    if sys.platform != "win32":
+        return False
+    selector = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    if selector is None:
+        return False
+    if isinstance(asyncio.get_event_loop_policy(), selector):
+        return False
+    # The tradeoff: SelectorEventLoop cannot spawn subprocesses and caps
+    # at 512 sockets. Neither matters here - nothing in this service
+    # shells out, and a single-merchant demo is nowhere near the cap.
+    asyncio.set_event_loop_policy(selector())
+    return True

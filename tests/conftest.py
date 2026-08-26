@@ -13,6 +13,12 @@ import os
 
 import pytest
 
+# Must run before pytest-asyncio creates a loop, or the integration
+# tests cannot reach the Postgres checkpointer on Windows.
+from core.infra import use_psycopg_compatible_loop  # noqa: E402
+
+use_psycopg_compatible_loop()
+
 # Must precede any import that calls settings() - it is lru_cached.
 os.environ.setdefault("ENABLE_KAFKA", "false")
 os.environ.setdefault("POSTGRES_DSN", "postgresql://nishchay:nishchay@127.0.0.1:5432/nishchay")

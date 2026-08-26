@@ -9,6 +9,10 @@ clickhouse-connect==0.8.11
 aiokafka==0.12.0
 langgraph==0.2.60
 langgraph-checkpoint-postgres==2.0.9
+# The Postgres checkpointer is built on psycopg, not asyncpg. Without
+# these the resolver silently falls back to an in-memory checkpointer
+# and chaos 5 stops being durable across a restart.
+psycopg[binary,pool]==3.2.3
 anthropic==0.42.0
 rich==13.9.4
 pytest==8.3.4

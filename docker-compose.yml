@@ -52,7 +52,9 @@ services:
       CLICKHOUSE_USER: nishchay
       CLICKHOUSE_PASSWORD: nishchay
       CLICKHOUSE_DB: nishchay
-      CLICKHOUSE_SKIP_USER_SETUP: 1
+      # No CLICKHOUSE_SKIP_USER_SETUP here: it suppresses creation of the
+      # `nishchay` user, and the entrypoint then tries to create the
+      # database *as* that user and exits 4 on AUTHENTICATION_FAILED.
     ulimits:
       nofile: {soft: 262144, hard: 262144}
     volumes:

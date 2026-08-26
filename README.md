@@ -32,7 +32,7 @@ run time by `harness/demo.py` — none of it is written down as a constant.
 | Verdict accuracy | — | **6/6** |
 | p95 time to verdict | — | 16 ms |
 | Chaos faults handled | — | **9/9** |
-| Tests | — | **105 passing** |
+| Tests | — | **113 passing** (incl. 8 integration) |
 
 The two zeros are **invariants, not percentiles**. One violation is a bug,
 and `harness/demo.py` exits non-zero if either moves.
@@ -153,7 +153,9 @@ docker compose up -d                  # postgres · redis · redpanda · clickho
 python -m harness.demo --all          # accuracy, confusion matrix, veto log
 python -m harness.chaos --all         # 9 fault injections
 python -m harness.baseline            # the before-number, on its own
-pytest -q                             # 105 tests, ScriptedLLM only
+pytest -q                             # 113 tests, ScriptedLLM only
+                                      #   integration tests skip when
+                                      #   Docker is not up
 
 uvicorn web.main:app --port 8000      # the console → http://localhost:8000
                                       #   1 live console · 2 order timeline
@@ -170,7 +172,8 @@ python -m harness.sign_and_post --bad-signature      # expects 400
 
 `docker compose up` starts the backing stores *and* the three
 application processes — ingress on :8000, the console on :8080, and the
-worker. `services/worker.py` is the production path: Kafka in, triage,
+worker. Verified: seven containers, `/health` reporting `degraded: []`,
+and a signed webhook flowing ingress → Kafka → worker → ClickHouse. `services/worker.py` is the production path: Kafka in, triage,
 resolve, gate, execute, persist outcomes, and a scheduler tick that
 re-folds orders whose banking-day recheck has come due.
 

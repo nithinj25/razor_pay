@@ -28,7 +28,7 @@ from typing import Any
 
 from core.config import Settings, settings
 from core.fold import FoldConfig
-from core.infra import Infra
+from core.infra import Infra, use_psycopg_compatible_loop
 from core.llm import build_llm
 from core.outcomes import build_outcome_store, outcome_row
 from services.pipeline import Pipeline
@@ -215,6 +215,8 @@ def main() -> None:
         "--live", action="store_true",
         help="actually call the Razorpay API (default is dry run)",
     )
+    # Before any loop is created, or the Postgres checkpointer degrades.
+    use_psycopg_compatible_loop()
     try:
         asyncio.run(main_async(ap.parse_args()))
     except KeyboardInterrupt:

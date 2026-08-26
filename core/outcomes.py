@@ -248,9 +248,23 @@ async def build_outcome_store(cfg: Any, pool: Any = None) -> OutcomeStore:
         port = int(url[1]) if len(url) > 1 else 8123
         if not _port_open(host, port):
             raise ConnectionError(f"clickhouse not listening on {host}:{port}")
-        client = clickhouse_connect.get_client(
+
+        # Connect to `default` first and create our database if needed.
+        # The image's CLICKHOUSE_DB only runs on a first boot with an
+        # empty data directory, so a container that failed partway
+        # through its first start leaves a volume where init never runs
+        # again. Creating it here makes the store independent of how the
+        # container happened to boot.
+        admin = clickhouse_connect.get_client(
             host=host, port=port,
             username="nishchay", password="nishchay", database="default",
+            connect_timeout=3,
+        )
+        admin.command("CREATE DATABASE IF NOT EXISTS nishchay")
+
+        client = clickhouse_connect.get_client(
+            host=host, port=port,
+            username="nishchay", password="nishchay", database="nishchay",
             connect_timeout=3,
         )
         store = ClickHouseOutcomeStore(client)

@@ -68,9 +68,18 @@ async def test_null_store_keeps_rows_when_no_database_is_up():
 
 @pytest.fixture
 async def worker():
-    """A worker on the in-process fallbacks — no Docker required."""
+    """A worker with an in-memory outcome store.
+
+    These are unit tests of the worker's own behaviour - locking, the
+    scheduler tick, what gets written - so the outcome backend is pinned
+    rather than left to whichever database happens to be running. With
+    Docker up the worker would otherwise pick ClickHouse and these
+    assertions would depend on the environment. The real ClickHouse and
+    Postgres writes are covered in tests/test_integration.py.
+    """
     w = Worker(dry_run=True)
     await w.start()
+    w.outcomes = NullOutcomeStore()
     yield w
     await w.stop()
 

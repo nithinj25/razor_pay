@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -52,11 +53,19 @@ def test_missing_event_id_is_rejected(client):
 
 
 def test_valid_webhook_is_stored_once(client):
+    """Chaos 1 at the ingress: five deliveries, one stored row.
+
+    The event id is generated per run. Dedupe is global on event_id with
+    a seven-day TTL (E20), so a hardcoded id would be claimed by any
+    earlier run against the same Redis and the first POST here would be
+    absorbed as a duplicate.
+    """
     d = sc.SCENARIO_B.deliveries[0]
+    event_id = f"evt_test_{uuid.uuid4().hex[:12]}"
     before = stats["received"]
 
-    assert post(client, d.body, d.event_id).status_code == 200
-    assert post(client, d.body, d.event_id).status_code == 200   # chaos 1
+    assert post(client, d.body, event_id).status_code == 200
+    assert post(client, d.body, event_id).status_code == 200   # chaos 1
 
     assert stats["received"] == before + 1, "duplicate was stored twice"
 
