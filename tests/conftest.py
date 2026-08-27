@@ -27,7 +27,8 @@ use_psycopg_compatible_loop()
 # Every provider key, not just the ones that existed when this was
 # written - a new provider added to .env would otherwise silently put the
 # suite back on the network.
-for _key in ("ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "GEMINI_API_KEY"):
+for _key in ("ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "GEMINI_API_KEY",
+             "WHATSAPP_ACCESS_TOKEN", "DEMO_WHATSAPP_TO"):
     os.environ[_key] = ""
 os.environ["LLM_PROVIDER"] = "auto"
 
@@ -48,5 +49,8 @@ def _fast_local_settings():
     cfg.anthropic_api_key = ""
     cfg.nvidia_api_key = ""
     cfg.gemini_api_key = ""
+    # No test may send a real WhatsApp message either.
+    cfg.whatsapp_access_token = ""
+    cfg.demo_whatsapp_to = ""
     yield
     settings.cache_clear()

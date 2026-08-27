@@ -32,8 +32,7 @@ from core.intents import TEMPLATE_REGISTRY, Channel, RecoveryIntent
 from core.verdicts import Action
 from services.gate.rules import GateDecision
 
-#: Channels we can actually deliver on. Everything else is modelled,
-#: gated, and stubbed - see GUARDRAILS section 6 for the voice argument.
+#: Channels Razorpay payment links notify natively.
 LIVE_CHANNELS = frozenset({Channel.SMS, Channel.EMAIL})
 
 
@@ -107,9 +106,13 @@ class Executor:
         client: RazorpayClient | None = None,
         dry_run: bool = True,
         cfg: Settings | None = None,
+        whatsapp: Any = None,
     ):
+        from services.executor.whatsapp import WhatsAppSender
+
         self.cfg = cfg or settings()
         self.client = client or RazorpayClient(self.cfg)
+        self.whatsapp = whatsapp if whatsapp is not None else WhatsAppSender(self.cfg)
         self.dry_run = dry_run
         self.executed: dict[str, Outcome] = {}      # idem_key -> outcome
         self.outcomes: list[Outcome] = []
@@ -235,6 +238,22 @@ class Executor:
                 Outcome(**base, action=action, status="FAILED", detail=f"{type(e).__name__}: {e}")
             )
 
+    async def _link_url(self, payload: dict, decision: GateDecision) -> str:
+        """Create the actual Razorpay payment link and return its short URL.
+
+        This is why the model cannot be trusted to fill the {link} slot:
+        the URL does not exist until now. In dry run there is no link to
+        create, so the placeholder says so rather than inventing one that
+        would 404 on a reviewer's phone.
+        """
+        if self.dry_run or not self.cfg.rzp_key_secret:
+            return "[dry-run: no live link created]"
+        try:
+            resp = await self.client.payment_link(payload, decision.idem_key)
+            return resp.get("short_url", "")
+        except httpx.HTTPError:
+            return ""
+
     async def _send_link(
         self, base: dict, intent: RecoveryIntent, decision: GateDecision,
         amount: int, merchant: str,
@@ -260,6 +279,30 @@ class Executor:
         if intent.method_hint:
             payload["options"] = {"checkout": {"method": {intent.method_hint: "1"}}}
 
+        # WhatsApp goes out over Meta's Cloud API when it is configured.
+        # The gate has already cleared the template for this channel, so
+        # this is delivery, not a second decision.
+        if intent.channel == Channel.WHATSAPP:
+            if not self.whatsapp.configured:
+                return Outcome(
+                    **base, action=Action.SEND_RECOVERY_LINK, status="STUBBED",
+                    detail="WhatsApp not configured; link payload built, not dispatched",
+                    request=payload,
+                )
+            link = await self._link_url(payload, decision)
+            body = _with_link(decision.rendered, link)
+            to = self.whatsapp.recipient_for(_contact_of(payload))
+            res = await self.whatsapp.send_text(to, body)
+            return Outcome(
+                **base, action=Action.SEND_RECOVERY_LINK,
+                status="EXECUTED" if res.ok else "FAILED",
+                detail=(f"WhatsApp -> {to}: {res.detail}"
+                        + (" (demo recipient, not the customer)"
+                           if self.whatsapp.uses_demo_recipient else "")),
+                request={**payload, "whatsapp": res.request},
+                response=res.response or {},
+            )
+
         if intent.channel not in LIVE_CHANNELS:
             return Outcome(
                 **base, action=Action.SEND_RECOVERY_LINK, status="STUBBED",
@@ -280,3 +323,24 @@ class Executor:
             detail=f"link sent over {intent.channel.value}: {resp.get('short_url', '')}",
             request=payload, response=resp,
         )
+
+
+
+def _contact_of(payload: dict) -> str:
+    return str((payload.get("customer") or {}).get("contact", ""))
+
+
+def _with_link(rendered: str, link: str) -> str:
+    """Put the real payment link into the rendered template.
+
+    The template's {link} slot is filled by the model with a placeholder -
+    it has no way to know the URL, because the link does not exist until
+    the executor creates it. Substituting here keeps the model out of the
+    business of inventing URLs.
+    """
+    if not link:
+        return rendered
+    for placeholder in ("{link}", "link"):
+        if rendered.endswith(placeholder):
+            return rendered[: -len(placeholder)] + link
+    return f"{rendered.rstrip()} {link}" if link not in rendered else rendered

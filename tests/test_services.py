@@ -109,7 +109,13 @@ async def test_vetoed_decision_never_reaches_the_api():
 
 
 async def test_whatsapp_is_stubbed_not_silently_downgraded():
-    """The console must never claim a channel the executor did not use."""
+    """The console must never claim a channel the executor did not use.
+
+    WhatsApp now delivers for real when Meta Cloud API credentials are
+    configured (see tests/test_whatsapp.py). Unconfigured, it must still
+    stub rather than quietly fall back to SMS - a downgrade the console
+    would report as a WhatsApp send.
+    """
     s = sc.SCENARIO_E
     ex = Executor(dry_run=False, client=_ExplodingClient())
     intent = RecoveryIntent(
@@ -122,7 +128,7 @@ async def test_whatsapp_is_stubbed_not_silently_downgraded():
 
     out = await ex.execute(d, intent, s.order_id, "pay_x", 234000)
     assert out.status == "STUBBED"
-    assert "BSP" in out.detail
+    assert "not configured" in out.detail
     # The payload it *would* have sent is preserved for the audit row.
     assert out.request["notes"]["template_id"] == "RCV_UPI_ALT"
 

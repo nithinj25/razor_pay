@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_model: str = "gemini-3.5-flash-lite"
 
+    # -- WhatsApp (Meta Cloud API) -----------------------------------
+    #: Delivery only. The decision to send, the template and the channel
+    #: are already settled by the strategist and validated by the gate -
+    #: nothing here re-decides any of it.
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
+    #: Meta test numbers reach only an allow-list, so the demo recipient
+    #: overrides the customer's real contact. The outcome records that it
+    #: did, rather than implying we messaged the actual customer.
+    demo_whatsapp_to: str = ""
+
     postgres_dsn: str = "postgresql://nishchay:nishchay@localhost:5432/nishchay"
     redis_url: str = "redis://localhost:6379"
     kafka_bootstrap: str = "localhost:19092"
