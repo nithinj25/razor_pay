@@ -14,6 +14,7 @@ from core.config import Settings
 from core.intents import Assessment
 from core.llm import (
     LLMUnavailable,
+    FallbackLLM,
     NullLLM,
     NvidiaLLM,
     build_llm,
@@ -222,3 +223,131 @@ def test_summary_rolls_up_tokens_and_latency():
     assert s.tokens == 430
     assert s.latency_ms == 2000
     assert s.resolver_ran and s.strategist_ran
+
+
+# --------------------------------------------------------- gemini --
+
+def test_gemini_schema_drops_unsupported_keywords():
+    """Gemini takes an OpenAPI subset; an unknown keyword is a 400.
+
+    Dropping `maxLength` costs one layer of the DLT 30-char cap. It is
+    still enforced by pydantic on the way out and re-checked by the gate,
+    so the constraint holds - it is just no longer free.
+    """
+    from core.llm import to_gemini_schema
+
+    s = to_gemini_schema(Composition)
+    dumped = json.dumps(s)
+    for banned in ("additionalProperties", "maxLength", "$ref", "$defs"):
+        assert banned not in dumped, f"{banned} would 400"
+
+    # What must survive: the enums that bound the action space.
+    assert set(s["properties"]["template_id"]["enum"]) == {
+        "RCV_UPI_ALT", "RCV_RETRY", "RCV_DOWNTIME_WAIT"
+    }
+    assert s["properties"]["variables"]["maxItems"] == 5
+    assert "action" not in s["properties"]
+
+
+def test_gemini_optional_becomes_nullable_flag():
+    from core.llm import to_gemini_schema
+
+    m = to_gemini_schema(Composition)["properties"]["method_hint"]
+    assert m["type"] == "string" and m["nullable"] is True
+
+
+def test_gemini_sets_property_ordering():
+    """Output field order otherwise varies between calls."""
+    from core.llm import to_gemini_schema
+
+    s = to_gemini_schema(Assessment)
+    assert s["propertyOrdering"] == list(s["properties"])
+
+
+async def test_gemini_without_a_key_is_unavailable():
+    from core.llm import GeminiLLM
+
+    with pytest.raises(LLMUnavailable, match="GEMINI_API_KEY"):
+        await GeminiLLM(cfg()).structured(Assessment, "sys", "user")
+
+
+async def test_gemini_parses_a_valid_response():
+    from core.llm import GeminiLLM
+
+    class Good:
+        async def post(self, *a, **kw):
+            class R:
+                status_code = 200
+
+                def raise_for_status(self): ...
+
+                def json(self):
+                    return {
+                        "candidates": [{"content": {"parts": [{"text":
+                            '{"reasoning":"scoped outage","next_probe":"probe_history",'
+                            '"confidence":0.8}'}]}}],
+                        "usageMetadata": {"promptTokenCount": 60, "candidatesTokenCount": 40},
+                    }
+            return R()
+
+    llm = GeminiLLM(cfg(gemini_api_key="k"), client=Good())
+    a = await llm.structured(Assessment, "sys", "user", node="assess")
+    assert a.next_probe == "probe_history"
+    assert llm.usage.tokens_in == 60
+
+
+# ------------------------------------------------------- chaining --
+
+def test_auto_builds_a_chain_in_preference_order():
+    c = cfg(gemini_api_key="g", nvidia_api_key="n", anthropic_api_key="a")
+    assert c.providers == ("gemini", "anthropic", "nvidia")
+    assert isinstance(build_llm(c), FallbackLLM)
+    # A single provider needs no wrapper.
+    assert not isinstance(build_llm(cfg(gemini_api_key="g")), FallbackLLM)
+
+
+async def test_chain_fails_over_on_rate_limit():
+    """The reason the chain exists: a 429 must cost a retry, not a fallback."""
+    class Busy:
+        usage = None
+
+        async def structured(self, *a, **kw):
+            raise LLMUnavailable("provider busy (429)")
+
+    class Works:
+        usage = None
+
+        async def structured(self, schema, *a, **kw):
+            return schema(reasoning="ok", next_probe="compose", confidence=0.9)
+
+    chain = FallbackLLM([("gemini", Busy()), ("nvidia", Works())])
+    a = await chain.structured(Assessment, "sys", "user")
+    assert a.next_probe == "compose"
+    assert chain.last_provider == "nvidia", "trace must name who actually answered"
+    assert any("gemini" in f for f in chain.failovers)
+
+
+async def test_chain_raises_only_when_every_provider_is_out():
+    class Busy:
+        usage = None
+
+        async def structured(self, *a, **kw):
+            raise LLMUnavailable("busy")
+
+    chain = FallbackLLM([("gemini", Busy()), ("nvidia", Busy())])
+    with pytest.raises(LLMUnavailable) as e:
+        await chain.structured(Assessment, "sys", "user")
+    # Both failures are reported, so a degraded trace says which.
+    assert "gemini" in str(e.value) and "nvidia" in str(e.value)
+
+
+def test_no_provider_key_leaks_into_the_test_suite():
+    """Guards the regression twice made: adding a provider to .env and
+    silently putting the whole suite back on the network."""
+    from core.config import Settings
+
+    live = Settings()          # reads .env and the environment as tests see it
+    assert live.providers == (), (
+        f"tests would make live API calls via {live.providers}; "
+        "add the new key to the blanked list in tests/conftest.py"
+    )

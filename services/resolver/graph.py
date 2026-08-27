@@ -142,6 +142,17 @@ class Resolver:
         self.usage = getattr(self.llm, "usage", Usage())
         self.app = self._build(checkpointer)
 
+
+    def _answering_model(self) -> str:
+        """The model that actually replied, not the one we hoped would.
+
+        With a fallback chain the primary can be rate-limited and a
+        different provider answers. Reporting the configured model would
+        make the trace quietly wrong about where the reasoning came from.
+        """
+        name = getattr(self.llm, "last_provider", "") or self.cfg.provider
+        return self.cfg.model_for(name) or name
+
     @staticmethod
     def _attempted(state: ResolveState) -> set[str]:
         """Probes already tried this run, successful or not.
@@ -223,7 +234,7 @@ class Resolver:
             ][:3] or fallback
             step = AgentStep(
                 agent="resolver", node="plan", source=self._source,
-                model=self.cfg.model_name,
+                model=self._answering_model(),
                 summary=plan.reasoning,
                 latency_ms=int((time.monotonic() - t0) * 1000),
                 prompt_chars=len(PLAN_SYSTEM) + len(user),
@@ -355,7 +366,7 @@ class Resolver:
             )
             step = AgentStep(
                 agent="resolver", node="narrate", source=self._source,
-                model=self.cfg.model_name, summary=n.summary,
+                model=self._answering_model(), summary=n.summary,
                 latency_ms=int((time.monotonic() - t0) * 1000),
                 prompt_chars=len(ANALYZE_SYSTEM) + len(user),
                 tokens_in=len(ANALYZE_SYSTEM + user) // 4,

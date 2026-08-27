@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,8 +23,10 @@ class Settings(BaseSettings):
     rzp_api_base: str = "https://api.razorpay.com"
 
     # -- LLM provider ------------------------------------------------
-    #: "anthropic" | "nvidia" | "auto". `auto` prefers whichever key is
-    #: present, Anthropic first.
+    #: "gemini" | "nvidia" | "anthropic" | "auto".
+    #: `auto` builds a fallback chain from every key present, in
+    #: preference order - so one provider rate-limiting mid-loop does not
+    #: force the agents onto their deterministic path.
     llm_provider: str = "auto"
 
     anthropic_api_key: str = ""
@@ -40,6 +43,14 @@ class Settings(BaseSettings):
     #: better but takes ~9s, and the strategist's 6-turn loop has a 15s
     #: budget. Latency is the reason the smaller model is the default.
     nvidia_model: str = "nvidia/nemotron-3-nano-30b-a3b"
+
+    #: Google AI Studio. Free tier, and the strongest schema enforcement
+    #: of the three: `responseSchema` constrains decoding directly.
+    #: flash-lite answers in ~1.5s, which matters against the strategist's
+    #: 15s budget - Nemotron was spending 5-13s a call.
+    gemini_api_key: str = ""
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    gemini_model: str = "gemini-3.5-flash-lite"
 
     postgres_dsn: str = "postgresql://nishchay:nishchay@localhost:5432/nishchay"
     redis_url: str = "redis://localhost:6379"
@@ -65,26 +76,47 @@ class Settings(BaseSettings):
     def is_test_mode(self) -> bool:
         return self.rzp_key_id.startswith("rzp_test_")
 
+    #: Preference order for `auto`. Gemini first: fastest, and its
+    #: responseSchema constrains decoding rather than merely requesting it.
+    PROVIDER_ORDER: ClassVar[tuple[str, ...]] = ("gemini", "anthropic", "nvidia")
+
+    def _key_for(self, name: str) -> str:
+        return {
+            "gemini": self.gemini_api_key,
+            "anthropic": self.anthropic_api_key,
+            "nvidia": self.nvidia_api_key,
+        }.get(name, "")
+
+    @property
+    def providers(self) -> tuple[str, ...]:
+        """Every usable provider, in the order they will be tried.
+
+        More than one is not redundancy for its own sake: free tiers
+        rate-limit mid-loop, and a second provider means a 429 costs a
+        retry rather than dropping the agents onto their fallback path in
+        the middle of a demo.
+        """
+        if self.llm_provider != "auto":
+            name = self.llm_provider
+            return (name,) if self._key_for(name) else ()
+        return tuple(n for n in self.PROVIDER_ORDER if self._key_for(n))
+
     @property
     def provider(self) -> str:
-        """Which provider will actually be used."""
-        if self.llm_provider == "anthropic":
-            return "anthropic" if self.anthropic_api_key else "none"
-        if self.llm_provider == "nvidia":
-            return "nvidia" if self.nvidia_api_key else "none"
-        if self.anthropic_api_key:
-            return "anthropic"
-        if self.nvidia_api_key:
-            return "nvidia"
-        return "none"
+        """The primary provider, or "none"."""
+        return self.providers[0] if self.providers else "none"
+
+    def model_for(self, name: str) -> str:
+        return {
+            "gemini": self.gemini_model,
+            "anthropic": self.anthropic_model,
+            "nvidia": self.nvidia_model,
+        }.get(name, "")
 
     @property
     def model_name(self) -> str:
         """The model id to report in traces, whichever provider is live."""
-        return {
-            "anthropic": self.anthropic_model,
-            "nvidia": self.nvidia_model,
-        }.get(self.provider, "")
+        return self.model_for(self.provider)
 
 
 @lru_cache

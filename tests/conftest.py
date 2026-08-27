@@ -24,8 +24,11 @@ use_psycopg_compatible_loop()
 # in .env, anything constructing a default client would start making real
 # calls - which is slow, rate-limited, and makes the suite depend on the
 # network. Blank the keys so build_llm() returns NullLLM.
-os.environ["ANTHROPIC_API_KEY"] = ""
-os.environ["NVIDIA_API_KEY"] = ""
+# Every provider key, not just the ones that existed when this was
+# written - a new provider added to .env would otherwise silently put the
+# suite back on the network.
+for _key in ("ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "GEMINI_API_KEY"):
+    os.environ[_key] = ""
 os.environ["LLM_PROVIDER"] = "auto"
 
 # Must precede any import that calls settings() - it is lru_cached.
@@ -44,5 +47,6 @@ def _fast_local_settings():
     # the instance too rather than trusting env precedence.
     cfg.anthropic_api_key = ""
     cfg.nvidia_api_key = ""
+    cfg.gemini_api_key = ""
     yield
     settings.cache_clear()

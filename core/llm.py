@@ -340,13 +340,183 @@ class NvidiaLLM:
                 await client.aclose()
 
 
-def build_llm(cfg: Settings | None = None) -> LLM:
-    """Whichever provider is configured. NullLLM when none is."""
-    cfg = cfg or settings()
+#: Keywords Gemini's responseSchema does not accept. It takes an OpenAPI
+#: subset, and an unknown keyword is a 400 rather than something ignored.
+_GEMINI_UNSUPPORTED = frozenset(
+    {"additionalProperties", "maxLength", "minLength", "minimum", "maximum",
+     "exclusiveMinimum", "exclusiveMaximum", "pattern", "const", "$schema"}
+)
+
+
+def to_gemini_schema(model: Type[BaseModel]) -> dict:
+    """Pydantic schema -> Gemini `responseSchema`.
+
+    Gemini accepts an OpenAPI subset, so the string/number bounds are
+    dropped. That costs one layer: `maxLength: 30` on a DLT variable is no
+    longer enforced by the decoder. It is still enforced twice more - the
+    pydantic model validates on the way out, and the gate re-checks the
+    5x30 limit before anything is sent - so the constraint holds; it is
+    just no longer free.
+
+    `propertyOrdering` is set because Gemini's output order otherwise
+    varies between calls, which makes responses needlessly hard to diff.
+    """
+    def clean(node: dict) -> dict:
+        out: dict = {}
+        for k, v in node.items():
+            if k in _GEMINI_UNSUPPORTED:
+                continue
+            if isinstance(v, dict):
+                out[k] = clean(v)
+            elif isinstance(v, list):
+                out[k] = [clean(i) if isinstance(i, dict) else i for i in v]
+            else:
+                out[k] = v
+        if out.get("type") == "object" and "properties" in out:
+            out["propertyOrdering"] = list(out["properties"])
+        # Gemini spells nullability as a flag, not a union type.
+        if isinstance(out.get("type"), list):
+            types = [t for t in out["type"] if t != "null"]
+            out["type"] = types[0] if types else "string"
+            out["nullable"] = True
+        return out
+
+    return clean(_inline_refs(model.model_json_schema()))
+
+
+class GeminiLLM:
+    """Google AI Studio. Free tier, and the strongest schema enforcement here.
+
+    `responseSchema` constrains decoding directly rather than asking the
+    model to co-operate, which is closer to Anthropic's forced tool use
+    than NVIDIA's json_schema hint. Measured at ~1.5s for flash-lite,
+    which matters: the strategist's whole loop has a 15s budget.
+
+    Tested under injection - the enum held, and the model named the
+    injection attempt in its own reasoning field rather than acting on it.
+    """
+
+    def __init__(self, cfg: Settings | None = None, client: Any = None) -> None:
+        self.cfg = cfg or settings()
+        self._client = client
+        self.usage = Usage()
+
+    async def structured(
+        self, schema: Type[T], system: str, user: str, node: str = "", temperature: float = 0.0
+    ) -> T:
+        import httpx
+
+        if not self.cfg.gemini_api_key:
+            raise LLMUnavailable("GEMINI_API_KEY not set")
+
+        body = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": to_gemini_schema(schema),
+                "temperature": temperature,
+                "maxOutputTokens": 2048,
+            },
+        }
+
+        client = self._client
+        owned = client is None
+        if owned:
+            client = httpx.AsyncClient(
+                base_url=self.cfg.gemini_base_url,
+                headers={"x-goog-api-key": self.cfg.gemini_api_key},
+                timeout=60.0,
+            )
+        try:
+            last: Exception | None = None
+            for _ in range(2):
+                try:
+                    r = await client.post(
+                        f"/models/{self.cfg.gemini_model}:generateContent", json=body
+                    )
+                    if r.status_code in (429, 503):
+                        raise LLMUnavailable(f"provider busy ({r.status_code})")
+                    r.raise_for_status()
+                    data = r.json()
+                    text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    u = data.get("usageMetadata", {})
+                    self.usage.add(
+                        node or schema.__name__,
+                        u.get("promptTokenCount", 0),
+                        u.get("candidatesTokenCount", 0),
+                    )
+                    return schema.model_validate_json(extract_json(text))
+                except LLMUnavailable:
+                    raise
+                except (ValidationError, ValueError, KeyError, IndexError) as e:
+                    last = e                 # one retry on a schema violation
+                    continue
+                except Exception as e:       # noqa: BLE001
+                    raise LLMUnavailable(f"{type(e).__name__}: {e}") from e
+            raise LLMUnavailable(f"schema violation after retry: {last}")
+        finally:
+            if owned:
+                await client.aclose()
+
+
+class FallbackLLM:
+    """Try each provider in turn; give up only when all are unavailable.
+
+    Free tiers rate-limit mid-loop. With one provider a 429 drops the
+    agents onto their deterministic path in the middle of a run - correct,
+    but it means a demo recording shows amber fallbacks for reasons that
+    have nothing to do with the design. With two, a 429 costs a retry.
+
+    Only `LLMUnavailable` moves to the next provider. A schema violation
+    has already been retried inside the client, and asking a different
+    model the same badly-posed question is unlikely to help.
+    """
+
+    def __init__(self, clients: list[tuple[str, LLM]]) -> None:
+        self.clients = clients
+        self.usage = Usage()
+        #: Which provider answered last, for the trace.
+        self.last_provider = clients[0][0] if clients else ""
+        self.failovers: list[str] = []
+
+    async def structured(
+        self, schema: Type[T], system: str, user: str, node: str = "", temperature: float = 0.0
+    ) -> T:
+        errors: list[str] = []
+        for name, client in self.clients:
+            try:
+                out = await client.structured(schema, system, user, node, temperature)
+                self.last_provider = name
+                u = getattr(client, "usage", None)
+                if u is not None:
+                    self.usage.add(node or schema.__name__, u.tokens_in, u.tokens_out)
+                    u.tokens_in = u.tokens_out = 0
+                return out
+            except LLMUnavailable as e:
+                errors.append(f"{name}: {e}")
+                self.failovers.append(f"{name} -> {e}")
+                continue
+        raise LLMUnavailable("; ".join(errors) or "no providers configured")
+
+
+def build_client(name: str, cfg: Settings) -> LLM:
     return {
+        "gemini": lambda: GeminiLLM(cfg),
         "anthropic": lambda: AnthropicLLM(cfg),
         "nvidia": lambda: NvidiaLLM(cfg),
-    }.get(cfg.provider, NullLLM)()
+    }.get(name, NullLLM)()
+
+
+def build_llm(cfg: Settings | None = None) -> LLM:
+    """Whichever providers are configured, chained. NullLLM when none are."""
+    cfg = cfg or settings()
+    names = cfg.providers
+    if not names:
+        return NullLLM()
+    if len(names) == 1:
+        return build_client(names[0], cfg)
+    return FallbackLLM([(n, build_client(n, cfg)) for n in names])
 
 
 # ------------------------- untrusted input -------------------------

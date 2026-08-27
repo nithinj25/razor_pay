@@ -373,22 +373,36 @@ async def llm_status() -> JSONResponse:
     # this account, so structured output is enforced by response_format
     # json_schema + pydantic validation. Say so rather than implying the
     # same guarantee as Anthropic's forced tool use.
-    enforcement = {
+    ENFORCEMENT = {
+        "gemini": "responseSchema - constrains decoding directly",
         "anthropic": "forced tool_choice - the model cannot return prose",
         "nvidia": "response_format json_schema (strict) + pydantic validation",
-    }.get(cfg.provider, "none")
+    }
+    enforcement = ENFORCEMENT.get(cfg.provider, "none")
 
     return JSONResponse({
         "configured": configured,
         "provider": cfg.provider,
+        # More than one provider is a fallback chain, not redundancy for
+        # its own sake: free tiers rate-limit mid-loop, and a second
+        # provider turns a 429 into a retry rather than an amber fallback
+        # in the middle of a demo.
+        "chain": [
+            {"provider": n, "model": cfg.model_for(n),
+             "enforcement": ENFORCEMENT.get(n, "none")}
+            for n in cfg.providers
+        ],
         "client": type(llm).__name__,
         "model": cfg.model_name or None,
         "schema_enforcement": enforcement,
         "message": (
-            f"Live: agent calls go to {cfg.model_name} via {cfg.provider}. "
-            f"Structured output enforced by {enforcement}."
+            f"Live: agent calls go to {cfg.model_name} via {cfg.provider}"
+            + (f", falling back to {', '.join(cfg.providers[1:])} if it is "
+               f"rate-limited." if len(cfg.providers) > 1 else ".")
+            + f" Structured output enforced by {enforcement}."
             if configured else
-            "No LLM key configured (ANTHROPIC_API_KEY or NVIDIA_API_KEY). The "
+            "No LLM key configured (GEMINI_API_KEY, ANTHROPIC_API_KEY or "
+            "NVIDIA_API_KEY). The "
             "agents take their deterministic fallbacks, which still produces "
             "correct verdicts - that is chaos 4. Use mode=scripted to watch the "
             "agent loop run on canned responses."

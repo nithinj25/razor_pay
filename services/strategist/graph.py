@@ -116,15 +116,35 @@ You are NOT writing a message. You choose one registered template and
 supply its variables. TRAI/DLT rules cap this at {MAX_VARIABLES} variables of
 {MAX_VARIABLE_LEN} characters each, and the gate will reject anything else.
 
-Templates:
-- RCV_RETRY         vars (amount, merchant, link).  Generic retry. Use when
-                    nothing suggests the original method is broken.
-- RCV_UPI_ALT       vars (method, amount, merchant, link).  Steers the
-                    customer to UPI. Use when the original method is in a
-                    scoped outage AND UPI is a rail they have used before.
-- RCV_DOWNTIME_WAIT vars (amount, merchant, window).  Tells them not to
-                    retry yet. Use for a bank-wide outage with no
-                    alternative rail - reassures them they were not charged.
+Templates, with their variables IN ORDER. Supply them in that order.
+
+- RCV_RETRY         (amount, merchant, link)
+                    "Your payment of Rs {{amount}} to {{merchant}} did not go
+                    through. Complete it here: {{link}}"
+                    Generic retry. Use when nothing suggests the original
+                    method is broken.
+
+- RCV_UPI_ALT       (method, amount, merchant, link)
+                    "Your {{method}} payment of Rs {{amount}} to {{merchant}}
+                    could not be processed. Pay by UPI instead: {{link}}"
+                    IMPORTANT: {{method}} is the method that FAILED - the one
+                    the customer tried and could not complete, e.g.
+                    "netbanking". It is NOT the method you are steering them
+                    towards. Putting "upi" there produces "Your UPI payment
+                    could not be processed. Pay by UPI instead", which is
+                    nonsense to the customer.
+                    Use when the original method is in a scoped outage AND
+                    UPI is a rail they have used before.
+
+- RCV_DOWNTIME_WAIT (amount, merchant, window)
+                    "Your bank is temporarily unavailable. Your payment of
+                    Rs {{amount}} to {{merchant}} has not been charged. Please
+                    retry after {{window}}."
+                    Use for a bank-wide outage with no alternative rail -
+                    it reassures them they were not charged.
+
+`method_hint` is separate from the template variables: it is the rail you
+want the payment link to open on, so for RCV_UPI_ALT it is "upi".
 
 Channel: prefer a channel the customer actually engages with. WHATSAPP and
 SMS carry recovery links; EMAIL is the fallback.
@@ -146,6 +166,17 @@ class Strategist:
         self.probes = probes or {}
         self._source = "scripted" if type(self.llm).__name__ == "ScriptedLLM" else "model"
         self.app = self._build(checkpointer)
+
+
+    def _answering_model(self) -> str:
+        """The model that actually replied, not the one we hoped would.
+
+        With a fallback chain the primary can be rate-limited and a
+        different provider answers. Reporting the configured model would
+        make the trace quietly wrong about where the reasoning came from.
+        """
+        name = getattr(self.llm, "last_provider", "") or self.cfg.provider
+        return self.cfg.model_for(name) or name
 
     # ------------------------------ nodes ------------------------------
 
@@ -169,7 +200,7 @@ class Strategist:
             )
             step = AgentStep(
                 agent="strategist", node=f"assess (turn {turns})", source=self._source,
-                model=self.cfg.model_name, summary=a.reasoning,
+                model=self._answering_model(), summary=a.reasoning,
                 latency_ms=int((time.monotonic() - t0) * 1000),
                 prompt_chars=len(ASSESS_SYSTEM) + len(user),
                 tokens_in=len(ASSESS_SYSTEM + user) // 4,
@@ -247,7 +278,7 @@ class Strategist:
             intent = self._to_intent(c, state)
             step = AgentStep(
                 agent="strategist", node="compose", source=self._source,
-                model=self.cfg.model_name, summary=c.reasoning,
+                model=self._answering_model(), summary=c.reasoning,
                 latency_ms=int((time.monotonic() - t0) * 1000),
                 prompt_chars=len(COMPOSE_SYSTEM) + len(user),
                 tokens_in=len(COMPOSE_SYSTEM + user) // 4,

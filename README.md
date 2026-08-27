@@ -32,7 +32,7 @@ run time by `harness/demo.py` — none of it is written down as a constant.
 | Verdict accuracy | — | **6/6** |
 | p95 time to verdict | — | 16 ms |
 | Chaos faults handled | — | **9/9** |
-| Tests | — | **132 passing** (incl. 8 integration) |
+| Tests | — | **141 passing** (incl. 8 integration) |
 
 The two zeros are **invariants, not percentiles**. One violation is a bug,
 and `harness/demo.py` exits non-zero if either moves.
@@ -56,23 +56,33 @@ two actually happened** rather than leaving `0` to mean either.
 
 Two providers, switched by `LLM_PROVIDER`:
 
-| | Anthropic | NVIDIA NIM (free tier) |
-|---|---|---|
-| Schema enforcement | forced `tool_choice` — the model structurally cannot return prose | `response_format: json_schema` + `strict` + pydantic validation |
-| Under injection | schema holds | schema held in testing; both Nemotron models flagged the override attempt in their own reasoning |
-| Latency | — | ~4s (nano-30b), ~9s (super-120b) |
+Three providers, chained by `LLM_PROVIDER=auto` in preference order.
+All were tested against a live key before being trusted.
 
-NIM supports neither forced `tool_choice` nor `nvext.guided_json` on a
-free account — both were tried and rejected — so its guarantee is
-genuinely weaker: enforcement lives in the provider's decoder rather than
-in the protocol. That is why it is not the only defence. The composition
-schema has **no `action` field**, and the gate re-derives every
-precondition from the event store, so scenario F fails closed even if the
-schema layer were bypassed entirely.
+| | Gemini (free) | Anthropic | NVIDIA NIM (free) |
+|---|---|---|---|
+| Schema enforcement | `responseSchema` — constrains decoding | forced `tool_choice` — cannot return prose | `json_schema` + `strict` + pydantic |
+| Under injection | enum held; named the attempt in its reasoning | schema holds | enum held; both models named the attempt |
+| Latency | **~1.5s** (flash-lite) | — | ~4s (nano-30b), ~9s (super-120b) |
 
-The free tier also rate-limits mid-loop. When it does, the agents fall
-back to deterministic paths and Screen 5 marks those steps `fallback` in
-amber — the degradation is visible rather than silent.
+**Gemini is the default**: fastest, and its `responseSchema` constrains
+decoding rather than asking the model to co-operate. NIM supports neither
+forced `tool_choice` nor `nvext.guided_json` on a free account — both were
+tried and rejected — so its guarantee is genuinely the weakest of the
+three, enforcement living in the provider's decoder rather than the
+protocol.
+
+None of them is the only defence. The composition schema has **no
+`action` field**, and the gate re-derives every precondition from the
+event store, so scenario F fails closed even if the schema layer were
+bypassed entirely.
+
+Free tiers rate-limit mid-loop. That is why `auto` builds a *chain*: a 429
+on Gemini costs a retry against NVIDIA rather than dropping the agents
+onto their deterministic path in the middle of a recording. When every
+provider is out, Screen 5 marks those steps `fallback` in amber — the
+degradation stays visible rather than silent, and the trace names the
+provider that actually answered.
 
 ---
 
@@ -176,7 +186,7 @@ docker compose up -d                  # postgres · redis · redpanda · clickho
 python -m harness.demo --all          # accuracy, confusion matrix, veto log
 python -m harness.chaos --all         # 9 fault injections
 python -m harness.baseline            # the before-number, on its own
-pytest -q                             # 132 tests, ScriptedLLM only
+pytest -q                             # 141 tests, ScriptedLLM only
                                       #   integration tests skip when
                                       #   Docker is not up
 
