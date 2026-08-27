@@ -36,6 +36,13 @@ WINDOW_CLOSED = 131047
 #: Recipient is not on the test number's verified allow-list.
 NOT_ALLOWED = 131030
 
+#: Expired or invalid access token. The dashboard's temporary token lasts
+#: 24 hours, so this is the failure a demo hits the morning after setup.
+BAD_TOKEN = 190
+
+#: Template does not exist, or is not approved in this language.
+NO_TEMPLATE = 132001
+
 
 @dataclass
 class SendResult:
@@ -93,14 +100,36 @@ class WhatsAppSender:
         return await self._post(payload)
 
     async def send_template(
-        self, to: str, name: str = "hello_world", language: str = "en_US"
+        self,
+        to: str,
+        name: str = "hello_world",
+        language: str = "en_US",
+        params: list[str] | None = None,
     ) -> SendResult:
-        """Pre-approved template. Works outside the 24h window."""
+        """Pre-approved template with body parameters.
+
+        This is the correct path for a recovery message, not freeform
+        text. WhatsApp only permits freeform inside a 24-hour window that
+        the *customer* opens by messaging the business - and a customer
+        who just failed a payment and left has done no such thing. A
+        freeform recovery message therefore works in testing (the window
+        is open because you were poking at it) and silently fails for
+        every real customer, returning a success id either way.
+
+        The same discipline DLT already imposes: pre-register the message,
+        fill the slots, never generate prose. Two regulators, one rule.
+        """
+        template: dict[str, Any] = {"name": name, "language": {"code": language}}
+        if params:
+            template["components"] = [{
+                "type": "body",
+                "parameters": [{"type": "text", "text": str(p)} for p in params],
+            }]
         payload = {
             "messaging_product": "whatsapp",
             "to": _digits(to),
             "type": "template",
-            "template": {"name": name, "language": {"code": language}},
+            "template": template,
         }
         return await self._post(payload)
 
@@ -153,4 +182,11 @@ def _explain(data: dict) -> str:
     if code == NOT_ALLOWED:
         return ("recipient not on the test number's allow-list - add it under "
                 "'To' -> Manage phone number list in the Meta dashboard")
+    if code == BAD_TOKEN:
+        return ("access token expired - the dashboard's temporary token lasts "
+                "24h. Click 'Generate new token', or mint a System User token "
+                "that does not expire")
+    if code == NO_TEMPLATE:
+        return ("template not found or not approved in this language - check "
+                "WhatsApp Manager -> Message templates")
     return f"{err.get('message', 'send failed')}{f' ({sub})' if sub else ''}"

@@ -55,6 +55,12 @@ class Template(BaseModel):
     variables: tuple[str, ...]
     channels: frozenset[Channel]
     category: Category
+    #: The Meta-approved template name for this message, if registered.
+    #: WhatsApp requires its own registration on top of DLT - the same
+    #: constraint from a second regulator - and the parameter order must
+    #: match `variables` exactly, or slots fill with the wrong values and
+    #: nobody notices until a customer reads it.
+    whatsapp_name: str | None = None
 
     def render(self, values: list[str]) -> str:
         out = self.body
@@ -68,6 +74,7 @@ class Template(BaseModel):
 TEMPLATE_REGISTRY: dict[str, Template] = {
     "RCV_RETRY": Template(
         template_id="RCV_RETRY",
+        whatsapp_name="rcv_retry",
         dlt_id="1207162458392017001",
         body="Your payment of Rs {amount} to {merchant} did not go through. "
              "Complete it here: {link}",
@@ -77,6 +84,7 @@ TEMPLATE_REGISTRY: dict[str, Template] = {
     ),
     "RCV_UPI_ALT": Template(
         template_id="RCV_UPI_ALT",
+        whatsapp_name="rcv_upi_alt",
         dlt_id="1207162458392017002",
         body="Your {method} payment of Rs {amount} to {merchant} could not be "
              "processed. Pay by UPI instead: {link}",
@@ -86,6 +94,7 @@ TEMPLATE_REGISTRY: dict[str, Template] = {
     ),
     "RCV_DOWNTIME_WAIT": Template(
         template_id="RCV_DOWNTIME_WAIT",
+        whatsapp_name="rcv_downtime_wait",
         dlt_id="1207162458392017003",
         body="Your bank is temporarily unavailable. Your payment of Rs {amount} "
              "to {merchant} has not been charged. Please retry after {window}.",

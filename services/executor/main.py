@@ -306,16 +306,33 @@ class Executor:
             link = await self._link_url(payload, decision) if wants_link else ""
             body = _with_link(decision.rendered, link) if wants_link else decision.rendered
             to = self.whatsapp.recipient_for(contact)
-            res = await self.whatsapp.send_text(to, body)
+
+            # Template first, freeform only if the message is not
+            # registered with Meta. WhatsApp forbids business-initiated
+            # freeform outside a 24h window the *customer* opens, and a
+            # customer who just failed a payment and left has not opened
+            # one. Freeform would work in testing and silently fail for
+            # every real customer - returning a success id either way.
+            if template and template.whatsapp_name:
+                params = _template_params(template, list(intent.variables), link)
+                res = await self.whatsapp.send_template(
+                    to, template.whatsapp_name, "en_US", params
+                )
+                mode = f"template {template.whatsapp_name}"
+            else:
+                res = await self.whatsapp.send_text(to, body)
+                mode = "freeform (needs an open 24h window)"
+
             return Outcome(
                 **base, action=Action.SEND_RECOVERY_LINK,
                 status="EXECUTED" if res.ok else "FAILED",
-                detail=(f"WhatsApp -> {to}: {res.detail}"
+                detail=(f"WhatsApp {mode} -> {to}: {res.detail}"
                         + (" (demo recipient, not the customer)"
                            if self.whatsapp.uses_demo_recipient else "")),
-                request={**payload, "whatsapp": res.request},
+                request={**payload, "whatsapp": res.request, "body": body},
                 response=res.response or {},
             )
+
 
         if intent.channel not in LIVE_CHANNELS:
             return Outcome(
@@ -370,3 +387,22 @@ def _with_link(rendered: str, link: str) -> str:
         if looks_like_a_slot:
             return f"{head} {link}"
     return f"{rendered.rstrip()} {link}"
+
+
+def _template_params(template, variables: list[str], link: str) -> list[str]:
+    """Positional parameters for a WhatsApp template.
+
+    Order is taken from `template.variables`, so it matches the DLT
+    definition rather than whatever order the model happened to emit.
+    The link slot is overwritten with the real URL for the same reason it
+    is in the freeform path: the model cannot know a URL that does not
+    exist until the executor creates it.
+    """
+    params = list(variables)[: len(template.variables)]
+    # Pad if the model supplied fewer than the template declares, so the
+    # positions still line up rather than shifting left.
+    while len(params) < len(template.variables):
+        params.append("")
+    if link and "link" in template.variables:
+        params[template.variables.index("link")] = link
+    return params

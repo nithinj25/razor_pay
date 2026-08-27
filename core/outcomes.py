@@ -102,6 +102,24 @@ COLUMNS = (
 
 VETO_COLUMNS = "ts trace_id order_id action rule reason confidence evidence".split()
 
+RECEIPT_COLUMNS = (
+    "ts message_id recipient status error_code error_title conversation"
+).split()
+
+RECEIPTS_DDL_PG = """
+CREATE TABLE IF NOT EXISTS delivery_receipts (
+    id          BIGSERIAL PRIMARY KEY,
+    ts          TIMESTAMPTZ NOT NULL,
+    message_id  TEXT NOT NULL,
+    recipient   TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL,
+    error_code  INT NOT NULL DEFAULT 0,
+    error_title TEXT NOT NULL DEFAULT '',
+    conversation TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS receipts_message ON delivery_receipts (message_id, ts);
+"""
+
 
 def outcome_row(
     decision: Any, scenario: str = "", ground_truth: str = "", trace_id: str = ""
@@ -134,6 +152,7 @@ class OutcomeStore(Protocol):
     async def init(self) -> None: ...
     async def write_outcome(self, row: dict[str, Any]) -> None: ...
     async def write_vetoes(self, rows: list[dict[str, Any]]) -> None: ...
+    async def write_receipt(self, row: dict[str, Any]) -> None: ...
 
 
 class NullOutcomeStore:
@@ -144,6 +163,7 @@ class NullOutcomeStore:
     def __init__(self) -> None:
         self.outcomes: list[dict] = []
         self.vetoes: list[dict] = []
+        self.receipts: list[dict] = []
 
     async def init(self) -> None:
         return None
@@ -154,8 +174,19 @@ class NullOutcomeStore:
     async def write_vetoes(self, rows: list[dict[str, Any]]) -> None:
         self.vetoes.extend(rows)
 
+    async def write_receipt(self, row: dict[str, Any]) -> None:
+        self.receipts.append(row)
 
-class ClickHouseOutcomeStore:
+
+class _NoReceipts:
+    """Mixin: receipts are Postgres-only. A ClickHouse deployment still
+    keeps them in memory for the console rather than erroring."""
+
+    async def write_receipt(self, row: dict[str, Any]) -> None:
+        return None
+
+
+class ClickHouseOutcomeStore(_NoReceipts):
     backend = "clickhouse"
 
     def __init__(self, client: Any) -> None:
@@ -190,6 +221,22 @@ class PostgresOutcomeStore:
         async with self.pool.acquire() as c:
             for ddl in POSTGRES_DDL:
                 await c.execute(ddl)
+            await c.execute(RECEIPTS_DDL_PG)
+
+    async def write_receipt(self, row: dict[str, Any]) -> None:
+        from datetime import datetime, timezone
+
+        ph = ",".join(f"${i+1}" for i in range(len(RECEIPT_COLUMNS)))
+        vals = [
+            datetime.fromtimestamp(row.get("ts", 0), tz=timezone.utc)
+            if c == "ts" else row.get(c, "" if c != "error_code" else 0)
+            for c in RECEIPT_COLUMNS
+        ]
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO delivery_receipts ({','.join(RECEIPT_COLUMNS)}) "
+                f"VALUES ({ph})", *vals
+            )
 
     async def write_outcome(self, row: dict[str, Any]) -> None:
         from datetime import datetime, timezone

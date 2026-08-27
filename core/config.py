@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     #: overrides the customer's real contact. The outcome records that it
     #: did, rather than implying we messaged the actual customer.
     demo_whatsapp_to: str = ""
+    #: Meta app secret, for X-Hub-Signature-256 on delivery receipts.
+    #: Unset means receipts are accepted but marked unverified - losing
+    #: them silently is worse than recording that we could not check.
+    whatsapp_app_secret: str = ""
+    #: Echoed back during Meta's subscription handshake.
+    whatsapp_verify_token: str = "nishchay_verify_token"
 
     postgres_dsn: str = "postgresql://nishchay:nishchay@localhost:5432/nishchay"
     redis_url: str = "redis://localhost:6379"

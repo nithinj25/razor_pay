@@ -185,6 +185,58 @@ async def delete_webhook(hook_id: str) -> None:
             raise SystemExit(f"delete failed ({r.status_code}): {r.text[:200]}")
 
 
+async def register_whatsapp_templates(waba_id: str) -> list[dict]:
+    """Register our DLT templates with Meta as UTILITY templates.
+
+    WhatsApp requires its own approval on top of DLT - the same rule from
+    a second regulator. Registering them is what lets a recovery message
+    reach a customer who has *not* messaged us in the last 24 hours,
+    which is every real customer.
+
+    The {{n}} placeholders are positional and must follow
+    `Template.variables`, or the slots fill with the wrong values.
+    """
+    from core.intents import TEMPLATE_REGISTRY
+
+    cfg = settings()
+    out = []
+    async with httpx.AsyncClient(
+        base_url="https://graph.facebook.com/v21.0",
+        headers={"Authorization": f"Bearer {cfg.whatsapp_access_token}"},
+        timeout=40,
+    ) as c:
+        for t in TEMPLATE_REGISTRY.values():
+            if not t.whatsapp_name:
+                continue
+            body = t.body
+            example = []
+            for i, var in enumerate(t.variables, start=1):
+                body = body.replace("{" + var + "}", "{{" + str(i) + "}}")
+                example.append(_EXAMPLES.get(var, "sample"))
+            r = await c.post(f"/{waba_id}/message_templates", json={
+                "name": t.whatsapp_name,
+                "language": "en_US",
+                "category": "UTILITY",
+                "components": [{
+                    "type": "BODY", "text": body,
+                    "example": {"body_text": [example]},
+                }],
+            })
+            d = r.json()
+            out.append({
+                "template": t.template_id, "whatsapp_name": t.whatsapp_name,
+                "http": r.status_code,
+                "status": d.get("status") or (d.get("error") or {}).get("message", "")[:120],
+            })
+    return out
+
+
+_EXAMPLES = {
+    "amount": "2340", "merchant": "Acme Store", "method": "netbanking",
+    "link": "https://rzp.io/rzp/abc123", "window": "2 hours",
+}
+
+
 # ------------------------------- doctor -------------------------------
 
 async def doctor(url: str) -> int:
@@ -353,6 +405,13 @@ async def main_async(args) -> int:
             print(f"  {w['id']:<18} {'active' if w.get('active') else 'INACTIVE':<9} {w['url']}")
         return 0
 
+    if args.cmd == "templates":
+        rows = await register_whatsapp_templates(args.waba)
+        for r in rows:
+            print(f"  {r['template']:<20} -> {r['whatsapp_name']:<20} "
+                  f"HTTP {r['http']}  {r['status']}")
+        return 0
+
     if args.cmd == "attempts":
         items = await fetch_attempts(args.order)
         print(f"{len(items)} attempt(s) on {args.order}")
@@ -396,6 +455,9 @@ def main() -> None:
     h.add_argument("url_public", nargs="?",
                    help="public tunnel base URL; omit to just list")
     h.add_argument("--delete", metavar="HOOK_ID")
+
+    t = sub.add_parser("templates", help="register the DLT templates with Meta")
+    t.add_argument("waba", help="WhatsApp Business Account ID")
 
     a = sub.add_parser("attempts", help="every sibling attempt on an order")
     a.add_argument("order")

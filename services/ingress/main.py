@@ -38,11 +38,25 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(
             f"refusing to start: RZP_KEY_ID={cfg.rzp_key_id!r} is not a test key (E15)"
         )
+    # Delivery receipts persist alongside outcomes when a database is up.
+    try:
+        from core.outcomes import build_outcome_store
+
+        whatsapp_hook.STORE = await build_outcome_store(cfg, infra.pool)
+    except Exception:                                # noqa: BLE001
+        whatsapp_hook.STORE = None
+
     yield
     await infra.stop()
 
 
 app = FastAPI(title="nishchay-ingress", lifespan=lifespan)
+
+# Meta posts delivery receipts here. Mounted on the ingress because it is
+# already the public surface - one tunnel, two providers.
+from services.ingress import whatsapp_hook  # noqa: E402
+
+app.include_router(whatsapp_hook.router)
 
 
 @app.post("/webhook/razorpay")

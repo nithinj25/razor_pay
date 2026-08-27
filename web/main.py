@@ -490,3 +490,18 @@ async def agents(
             "Reaches the agents: this is where the model earns its place."
         ),
     })
+
+
+@app.get("/api/delivery")
+async def delivery() -> JSONResponse:
+    """WhatsApp delivery receipts.
+
+    `EXECUTED` used to mean "the API accepted it". Live testing showed
+    that can be false - Meta returned a message id for a message that was
+    never delivered. These receipts are what make the claim checkable, and
+    they belong next to the veto log for the same reason: an audit trail
+    that only records intentions is not an audit trail.
+    """
+    from services.ingress import whatsapp_hook
+
+    return JSONResponse(whatsapp_hook.summary())

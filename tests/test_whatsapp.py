@@ -131,8 +131,11 @@ async def test_executor_sends_over_whatsapp_when_configured():
     assert "919000000000" in out.detail
     assert "demo recipient" in out.detail, "must not imply we messaged the customer"
 
-    body = graph.calls[0][1]["text"]["body"]
-    assert "netbanking" in body and "Acme Store" in body
+    # Registered templates send as type=template, so the content lives in
+    # positional parameters rather than a text body.
+    params = [p["text"] for p in
+              graph.calls[0][1]["template"]["components"][0]["parameters"]]
+    assert "netbanking" in params and "Acme Store" in params
 
 
 async def test_executor_stubs_whatsapp_when_not_configured():
@@ -219,6 +222,116 @@ async def test_wait_template_gets_no_payment_link():
     assert d.allowed, d.reason
 
     await ex.execute(d, wait, s.order_id, "pay_E1downtime", 234000)
-    body = graph.calls[0][1]["text"]["body"]
-    assert "http" not in body, f"a wait message carried a payment link: {body}"
-    assert "not been charged" in body
+    sent = graph.calls[0][1]
+    assert sent["template"]["name"] == "rcv_downtime_wait"
+    params = [p["text"] for p in sent["template"]["components"][0]["parameters"]]
+    assert not any("http" in p for p in params), (
+        f"a wait message carried a payment link: {params}")
+    assert params == ["2340", "Acme Store", "2 hours"]
+
+
+# --------------------------------------------------- template path --
+
+async def test_registered_template_is_preferred_over_freeform():
+    """WhatsApp forbids business-initiated freeform outside a 24h window
+    the customer opens. A customer who failed a payment and left has not
+    opened one - so freeform works in testing and fails for every real
+    customer, returning a success id either way."""
+    from services.gate.rules import evaluate
+
+    s = sc.SCENARIO_E
+    graph = FakeGraph(200, {"messages": [{"id": "wamid.T"}]})
+    sender = WhatsAppSender(configured(demo_whatsapp_to="919000000000"), client=graph)
+    ex = Executor(dry_run=True, whatsapp=sender)
+
+    d = evaluate(_intent(), s.observations(), s.evaluate_at, evidence=s.evidence)
+    out = await ex.execute(d, _intent(), s.order_id, "pay_E1downtime", 234000)
+
+    assert out.status == "EXECUTED"
+    body = graph.calls[0][1]
+    assert body["type"] == "template", "sent freeform when a template was registered"
+    assert body["template"]["name"] == "rcv_upi_alt"
+    params = [p["text"] for p in body["template"]["components"][0]["parameters"]]
+    assert params[0] == "netbanking", "parameter order must follow the DLT definition"
+    assert "template rcv_upi_alt" in out.detail
+
+
+def test_template_params_follow_the_dlt_order_and_take_the_real_link():
+    from core.intents import TEMPLATE_REGISTRY
+    from services.executor.main import _template_params
+
+    t = TEMPLATE_REGISTRY["RCV_UPI_ALT"]
+    # The model invents a URL because it cannot know one that does not
+    # exist yet; the executor overwrites that slot.
+    out = _template_params(
+        t, ["netbanking", "2340", "Acme", "https://pay.acme/invented"],
+        "https://rzp.io/rzp/REAL",
+    )
+    assert out == ["netbanking", "2340", "Acme", "https://rzp.io/rzp/REAL"]
+
+
+def test_template_params_pad_rather_than_shift():
+    """Fewer variables than the template declares must not shift slots left."""
+    from core.intents import TEMPLATE_REGISTRY
+    from services.executor.main import _template_params
+
+    t = TEMPLATE_REGISTRY["RCV_UPI_ALT"]
+    out = _template_params(t, ["netbanking"], "")
+    assert len(out) == len(t.variables)
+    assert out[0] == "netbanking" and out[1] == ""
+
+
+# ------------------------------------------------ delivery receipts --
+
+def test_receipts_extracted_from_metas_envelope():
+    from services.ingress.whatsapp_hook import extract_statuses
+
+    rows = extract_statuses({"entry": [{"changes": [{"value": {"statuses": [
+        {"id": "wamid.A", "status": "delivered", "timestamp": "1700000000",
+         "recipient_id": "919902740794"},
+        {"id": "wamid.B", "status": "failed", "timestamp": "1700000001",
+         "recipient_id": "919902740794",
+         "errors": [{"code": 131047, "title": "Re-engagement message"}]},
+    ]}}]}]})
+    assert [r["status"] for r in rows] == ["delivered", "failed"]
+    assert rows[1]["error_code"] == 131047
+
+
+def test_inbound_customer_messages_are_ignored():
+    """The same webhook carries inbound messages; only statuses matter."""
+    from services.ingress.whatsapp_hook import extract_statuses
+
+    assert extract_statuses({"entry": [{"changes": [{"value": {
+        "messages": [{"id": "wamid.IN", "from": "919902740794"}]
+    }}]}]}) == []
+
+
+def test_receipt_signature_verification():
+    import hashlib
+    import hmac
+    import json as _json
+
+    from services.ingress.whatsapp_hook import verify_signature
+
+    raw = _json.dumps({"entry": []}).encode()
+    good = "sha256=" + hmac.new(b"appsecret", raw, hashlib.sha256).hexdigest()
+
+    assert verify_signature(raw, good, "appsecret")
+    assert not verify_signature(raw, "sha256=deadbeef", "appsecret")
+    assert not verify_signature(raw, None, "appsecret")
+    # No app secret: accept but the caller marks it unverified. Dropping
+    # every receipt would be worse than recording that we could not check.
+    assert verify_signature(raw, None, "")
+
+
+def test_receipt_summary_counts_by_status():
+    from services.ingress import whatsapp_hook as h
+
+    h.RECEIPTS.clear()
+    h.RECEIPTS["a"] = {"message_id": "a", "status": "delivered", "ts": 1}
+    h.RECEIPTS["b"] = {"message_id": "b", "status": "failed", "ts": 2}
+    s = h.summary()
+    assert s["total"] == 2
+    assert s["by_status"] == {"delivered": 1, "failed": 1}
+    assert len(s["failures"]) == 1
+    h.RECEIPTS.clear()
