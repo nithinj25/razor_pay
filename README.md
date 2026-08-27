@@ -226,6 +226,91 @@ all, and scripted steps are never counted as live ones.
 
 ---
 
+## The live loop — real order, real payment, real webhook
+
+Everything in `harness/` except this replays fixtures. A replay proves the
+fold is correct; only this proves the **integration** is real — that
+signature verification works against bytes we did not construct, that the
+event shapes match production, and that the chain from Razorpay to a
+verdict actually runs.
+
+```bash
+python -m harness.live doctor     # what is configured, what is missing
+python -m harness.live order      # create a REAL order, open checkout
+python -m harness.live watch      # follow observations and verdicts
+python -m harness.live attempts <order_id>   # every sibling attempt
+python -m harness.live capture <payment_id>  # moves real test-mode money
+```
+
+### Setup (four steps, ~10 minutes)
+
+**1. Razorpay test account.** Sign up — no KYC needed for test mode.
+Dashboard → Account & Settings → **API Keys** → Generate Test Key. You get
+`rzp_test_...` and a secret shown **once**. Put both in `.env`:
+
+```
+RZP_KEY_ID=rzp_test_xxxxxxxxxxxx
+RZP_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxx
+```
+
+**2. Start a public tunnel.** Razorpay must reach you over the internet;
+`localhost` will not do (pitfall #3).
+
+```bash
+tools/cloudflared.exe tunnel --url http://localhost:8000
+```
+
+It prints an `https://<random>.trycloudflare.com` URL. (`tools/` is
+gitignored — the binary is a download, not source.)
+
+**3. Register the webhook.** Dashboard → Account & Settings → **Webhooks**
+→ Add New. URL is `<your-tunnel-url>/webhook/razorpay`. Set your **own**
+webhook secret — this is *not* the API secret, and confusing the two is
+the single most common integration bug (pitfall #1). Put it in `.env` as
+`RZP_WEBHOOK_SECRET`. Subscribe to at least:
+
+```
+payment.authorized  payment.failed  payment.captured  order.paid
+refund.created  refund.processed  refund.failed
+```
+
+**4. Run it.**
+
+```bash
+docker compose up -d                      # ingress, worker, console, stores
+python -m harness.live doctor             # every row should read OK
+python -m harness.live order              # opens a checkout page
+```
+
+Pay with a test card — **`5104 0600 0000 0008` fails**, `4111 1111 1111
+1111` succeeds. Any future expiry, any CVV. UPI test ids are
+`success@razorpay` and `failure@razorpay`.
+
+### The scenario worth doing live
+
+Fail the payment first, then immediately retry and succeed **on the same
+order**. That is scenario A as it actually happens: two attempts, one
+order, one debit. Watch the worker log — the baseline would send a
+recovery link on the `payment.failed` and create a second order; Nishchay
+folds both attempts and returns `ORDER_SETTLED → NOOP`.
+
+Fifteen seconds of that footage is worth more than any replay, because
+nothing about it is staged.
+
+### Moving real money
+
+The executor is `dry_run=True` by default, so a live run resolves and
+gates but stubs the final API call. To let it actually capture or send a
+payment link:
+
+```bash
+python -m services.worker --live
+```
+
+Test mode only — `require_test_mode` refuses a live key at boot (E15).
+
+---
+
 ## Layout
 
 ```

@@ -29,3 +29,7 @@ chdata/
 Thumbs.db
 .idea/
 .vscode/
+
+# Downloaded tunnel binary, not source
+tools/
+checkout.html
