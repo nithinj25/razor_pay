@@ -134,6 +134,57 @@ async def capture(payment_id: str, amount_paise: int) -> dict:
         return r.json()
 
 
+#: What the fold actually consumes. Registering more is harmless; missing
+#: one means the resolver never sees the event that would settle a case.
+WEBHOOK_EVENTS = [
+    "payment.authorized", "payment.failed", "payment.captured",
+    "order.paid", "refund.created", "refund.processed", "refund.failed",
+]
+
+
+async def register_webhook(public_url: str) -> dict:
+    """Point Razorpay at our tunnel, over the API.
+
+    The dashboard can do this by hand, but a quick tunnel gets a new
+    hostname every restart, so by hand means re-pasting a URL every time.
+
+    Two shapes to get right: `events` is a map of name -> 1, not a list
+    (a list is echoed back as "Invalid event name/names: 1, 2, 3"), and
+    `secret` here is the WEBHOOK secret, which is not the API secret.
+    """
+    cfg = settings()
+    hook = public_url.rstrip("/") + "/webhook/razorpay"
+    async with httpx.AsyncClient(base_url=cfg.rzp_api_base, auth=_auth(), timeout=25) as c:
+        existing = (await c.get("/v1/webhooks")).json().get("items", [])
+        for w in existing:
+            if w.get("url") == hook:
+                return w                       # already pointed at us
+        r = await c.post("/v1/webhooks", json={
+            "url": hook,
+            "secret": cfg.rzp_webhook_secret,
+            "events": {e: 1 for e in WEBHOOK_EVENTS},
+        })
+        if r.status_code >= 400:
+            raise SystemExit(f"webhook registration failed ({r.status_code}): {r.text[:300]}")
+        return r.json()
+
+
+async def list_webhooks() -> list[dict]:
+    cfg = settings()
+    async with httpx.AsyncClient(base_url=cfg.rzp_api_base, auth=_auth(), timeout=25) as c:
+        r = await c.get("/v1/webhooks")
+        r.raise_for_status()
+        return r.json().get("items", [])
+
+
+async def delete_webhook(hook_id: str) -> None:
+    cfg = settings()
+    async with httpx.AsyncClient(base_url=cfg.rzp_api_base, auth=_auth(), timeout=25) as c:
+        r = await c.delete(f"/v1/webhooks/{hook_id}")
+        if r.status_code >= 400:
+            raise SystemExit(f"delete failed ({r.status_code}): {r.text[:200]}")
+
+
 # ------------------------------- doctor -------------------------------
 
 async def doctor(url: str) -> int:
@@ -176,11 +227,20 @@ async def doctor(url: str) -> int:
     except Exception as e:                           # noqa: BLE001
         line("local ingress", False, f"not running: {e}")
 
-    print("\ntunnel")
-    print("     Razorpay must reach you over the public internet; localhost will")
-    print("     not do. Start one with:  tools\\cloudflared.exe tunnel --url http://localhost:8000")
-    print("     Then paste the printed https URL into the Razorpay Dashboard webhook,")
-    print("     with path /webhook/razorpay, and subscribe to the payment.* events.")
+    print("\nwebhooks")
+    try:
+        hooks = await list_webhooks()
+        line("registered", bool(hooks), f"{len(hooks)} configured")
+        for w in hooks:
+            state = "active" if w.get("active") else "INACTIVE"
+            print(f"       {w['id']}  {state}  {w['url']}")
+        if not hooks:
+            print("       Razorpay must reach you over the public internet; localhost")
+            print("       will not do. Start a tunnel, then point Razorpay at it:")
+            print("         tools\\cloudflared.exe tunnel --url http://localhost:8000")
+            print("         python -m harness.live hook https://<name>.trycloudflare.com")
+    except Exception as e:                       # noqa: BLE001
+        line("registered", False, f"could not list: {e}")
 
     print("\n" + ("ready for a live run" if ok else "not ready - fix the XX rows above"))
     return 0 if ok else 1
@@ -275,6 +335,24 @@ async def main_async(args) -> int:
             webbrowser.open(f"file://{__import__('os').path.abspath(path)}")
         return 0
 
+    if args.cmd == "hook":
+        if args.delete:
+            await delete_webhook(args.delete)
+            print(f"deleted {args.delete}")
+            return 0
+        if args.url_public:
+            w = await register_webhook(args.url_public)
+            print(f"webhook {w['id']}")
+            print(f"  url    {w['url']}")
+            print(f"  active {w.get('active')}")
+            print(f"  events {sorted(k for k, v in (w.get('events') or {}).items() if v)}")
+            return 0
+        hooks = await list_webhooks()
+        print(f"{len(hooks)} webhook(s) registered")
+        for w in hooks:
+            print(f"  {w['id']:<18} {'active' if w.get('active') else 'INACTIVE':<9} {w['url']}")
+        return 0
+
     if args.cmd == "attempts":
         items = await fetch_attempts(args.order)
         print(f"{len(items)} attempt(s) on {args.order}")
@@ -313,6 +391,11 @@ def main() -> None:
     o = sub.add_parser("order", help="create a real order and open checkout")
     o.add_argument("--amount", type=int, default=234000, help="paise (default 234000 = Rs 2340)")
     o.add_argument("--no-open", action="store_true")
+
+    h = sub.add_parser("hook", help="register / list / delete the webhook")
+    h.add_argument("url_public", nargs="?",
+                   help="public tunnel base URL; omit to just list")
+    h.add_argument("--delete", metavar="HOOK_ID")
 
     a = sub.add_parser("attempts", help="every sibling attempt on an order")
     a.add_argument("order")
