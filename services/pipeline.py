@@ -191,9 +191,11 @@ class Pipeline:
                         }
                     )
 
+            contact, email = _customer_of(latest)
             d.outcome = await self.executor.execute(
                 d.gate, d.intent, order_id=oid, payment_id=payment_id,
                 amount=amount, merchant=self.merchant,
+                contact=contact, email=email,
             )
 
         d.latency_s = round(time.monotonic() - started, 4)
@@ -233,6 +235,19 @@ def _target_payment(observations: list[Observation], v: VerdictResult) -> str:
     if st.failed:
         return max(st.failed, key=lambda p: p.failed_at or 0).payment_id
     return next(iter(st.payments), "")
+
+
+def _customer_of(obs: Observation | None) -> tuple[str, str]:
+    """The payer's contact details, straight off the payment entity.
+
+    Razorpay puts `contact` and `email` on the payment; the recovery link
+    needs them to notify, and the WhatsApp sender needs the contact to
+    address the message at all.
+    """
+    if obs is None:
+        return "", ""
+    ent = (obs.payload.get("payload", {}).get("payment", {}) or {}).get("entity", {}) or {}
+    return str(ent.get("contact") or ""), str(ent.get("email") or "")
 
 
 def _notes_of(obs: Observation | None) -> dict:

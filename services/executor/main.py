@@ -137,6 +137,8 @@ class Executor:
         payment_id: str,
         amount: int,
         merchant: str = "Acme Store",
+        contact: str = "",
+        email: str = "",
     ) -> Outcome:
         base = dict(order_id=order_id, payment_id=payment_id, idem_key=decision.idem_key)
 
@@ -177,7 +179,9 @@ class Executor:
 
             if action == Action.SEND_RECOVERY_LINK:
                 return self._record(
-                    await self._send_link(base, intent, decision, amount, merchant)
+                    await self._send_link(
+                        base, intent, decision, amount, merchant, contact, email
+                    )
                 )
 
             if action == Action.REFUND:
@@ -256,7 +260,7 @@ class Executor:
 
     async def _send_link(
         self, base: dict, intent: RecoveryIntent, decision: GateDecision,
-        amount: int, merchant: str,
+        amount: int, merchant: str, contact: str = "", email: str = "",
     ) -> Outcome:
         template = TEMPLATE_REGISTRY.get(intent.template_id or "")
         payload = {
@@ -269,6 +273,11 @@ class Executor:
                 "email": intent.channel == Channel.EMAIL,
             },
             "reminder_enable": False,
+            # Razorpay notifies from this, and it is where the WhatsApp
+            # recipient comes from. Omitting it produced an empty `to`
+            # and a "parameter to is required" from Meta.
+            "customer": {k: v for k, v in
+                         (("contact", contact), ("email", email)) if v},
             "notes": {
                 "nishchay_idem": decision.idem_key[:16],
                 "template_id": intent.template_id or "",
@@ -289,9 +298,14 @@ class Executor:
                     detail="WhatsApp not configured; link payload built, not dispatched",
                     request=payload,
                 )
-            link = await self._link_url(payload, decision)
-            body = _with_link(decision.rendered, link)
-            to = self.whatsapp.recipient_for(_contact_of(payload))
+            # RCV_DOWNTIME_WAIT deliberately has no link variable - it
+            # tells the customer they were NOT charged and to wait. Bolting
+            # a pay-now link onto that contradicts the message, so only
+            # templates that declare a link slot get one.
+            wants_link = "link" in (template.variables if template else ())
+            link = await self._link_url(payload, decision) if wants_link else ""
+            body = _with_link(decision.rendered, link) if wants_link else decision.rendered
+            to = self.whatsapp.recipient_for(contact)
             res = await self.whatsapp.send_text(to, body)
             return Outcome(
                 **base, action=Action.SEND_RECOVERY_LINK,
@@ -326,21 +340,33 @@ class Executor:
 
 
 
-def _contact_of(payload: dict) -> str:
-    return str((payload.get("customer") or {}).get("contact", ""))
-
 
 def _with_link(rendered: str, link: str) -> str:
-    """Put the real payment link into the rendered template.
+    """Replace whatever stands in the {link} slot with the real URL.
 
-    The template's {link} slot is filled by the model with a placeholder -
-    it has no way to know the URL, because the link does not exist until
-    the executor creates it. Substituting here keeps the model out of the
-    business of inventing URLs.
+    Only called for templates that declare a `link` variable.
+
+    The payment link does not exist until the executor creates it, so the
+    model cannot know it - and asked for a link variable, a model will
+    confidently invent one ("https://pay.acme/alt"). Matching only the
+    literal "{link}" left the invented URL in place and appended the real
+    one, so the customer received two links, the first of which 404s.
+
+    So: whatever occupies the final token, replace it. A URL, a
+    placeholder, or the bare word "link" all mean the same thing here.
     """
     if not link:
         return rendered
-    for placeholder in ("{link}", "link"):
-        if rendered.endswith(placeholder):
-            return rendered[: -len(placeholder)] + link
-    return f"{rendered.rstrip()} {link}" if link not in rendered else rendered
+    if link in rendered:
+        return rendered
+
+    parts = rendered.rstrip().rsplit(" ", 1)
+    if len(parts) == 2:
+        head, last = parts
+        looks_like_a_slot = (
+            last.startswith(("http://", "https://", "{"))
+            or last.rstrip(".").lower() in ("link", "url")
+        )
+        if looks_like_a_slot:
+            return f"{head} {link}"
+    return f"{rendered.rstrip()} {link}"

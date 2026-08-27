@@ -175,3 +175,50 @@ async def test_vetoed_intent_never_reaches_whatsapp():
     out = await ex.execute(d, _intent(), s.order_id, "pay_F1injected", 234000)
     assert out.status == "VETOED"
     assert graph.calls == [], "a vetoed intent reached the network"
+
+
+# ------------------------------------------------------ link slot --
+
+def test_link_replaces_whatever_the_model_invented():
+    """Asked for a link variable, a model will confidently invent a URL.
+
+    Matching only the literal "{link}" left the invented one in place and
+    appended the real one, so the customer got two links and the first
+    404s.
+    """
+    from services.executor.main import _with_link
+
+    real = "https://rzp.io/rzp/REAL"
+    assert _with_link("Pay by UPI instead: https://pay.acme/alt", real).endswith(real)
+    assert "pay.acme" not in _with_link("Pay by UPI instead: https://pay.acme/alt", real)
+    assert _with_link("Complete it here: {link}", real).endswith(real)
+    assert _with_link("Complete it here: link", real).endswith(real)
+    # Idempotent - a message that already carries the link is left alone.
+    assert _with_link(f"here: {real}", real).count(real) == 1
+
+
+async def test_wait_template_gets_no_payment_link():
+    """RCV_DOWNTIME_WAIT says "you were not charged, retry later".
+
+    A pay-now link in that message contradicts it, so a template with no
+    link variable must not receive one.
+    """
+    from services.gate.rules import evaluate
+
+    s = sc.SCENARIO_E
+    graph = FakeGraph(200, {"messages": [{"id": "m"}]})
+    sender = WhatsAppSender(configured(demo_whatsapp_to="919000000000"), client=graph)
+    ex = Executor(dry_run=True, whatsapp=sender)
+
+    wait = RecoveryIntent(
+        action=Action.SEND_RECOVERY_LINK, template_id="RCV_DOWNTIME_WAIT",
+        variables=["2340", "Acme Store", "2 hours"],
+        channel=Channel.WHATSAPP, category=Category.SERVICE_IMPLICIT, confidence=0.92,
+    )
+    d = evaluate(wait, s.observations(), s.evaluate_at, evidence=s.evidence)
+    assert d.allowed, d.reason
+
+    await ex.execute(d, wait, s.order_id, "pay_E1downtime", 234000)
+    body = graph.calls[0][1]["text"]["body"]
+    assert "http" not in body, f"a wait message carried a payment link: {body}"
+    assert "not been charged" in body
