@@ -1,13 +1,15 @@
 {
-  "scenario": "D",
-  "title": "Bank ambiguity over a long weekend",
+  "scenario": "G",
+  "title": "Customer says they were debited, and quotes a reference",
   "order_id": "order_D4nishchay04",
   "start": 1769177400,
   "evaluate_at": 1769574600,
-  "ground_truth": "UNRESOLVED",
-  "note": "Friday 19:40. Saturday is a 4th Saturday, Sunday, then Republic Day. The window closes Tuesday, not Saturday. Razorpay documents that a bank can auto-refund without changing status, so this is unresolvable from the API - escalate with the RRN.",
+  "ground_truth": "DUPLICATE_RISK",
+  "note": "The payment says failed; the customer's bank statement says the money left. That is conflicting evidence about whether money moved, and it bars a recovery link outright - sending one would charge them a second time. Razorpay documents that a bank can auto-refund without changing payment status, so the API alone cannot settle this. The customer's own reference can.",
   "evidence": [],
-  "customer_messages": [],
+  "customer_messages": [
+    "hi team, i tried paying 2340 on 23/01 for my order but\nit showed failed. but money IS deducted from my hdfc account. checked\nstatement, the ref no is 2309-0149-5295 and amount 2340 debited 23 Jan\n7:40pm. please refund or confirm, i dont want to pay again and get charged\ntwice. account ending 4471."
+  ],
   "timeline": [
     {
       "at": 12,

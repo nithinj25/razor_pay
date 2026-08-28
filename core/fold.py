@@ -25,6 +25,7 @@ from core.banking import (
     end_of_day_ist,
     tat_deadline,
 )
+from core.claims import ClaimMatch, assess_claim
 from core.events import Observation, canonical_order
 from core.verdicts import (
     AMBIGUOUS_SOURCES,
@@ -379,6 +380,27 @@ def fold(
         fired.append("R10_downtime_pre_debit")
         return result(Verdict.CONFIRMED_FAILED, 0.92)
 
+    # -- R10b  The customer says money left their account, and the
+    #          reference they quoted is the RRN on this payment. Status
+    #          says failed; the customer's bank says otherwise. That is
+    #          conflicting evidence about whether money moved, which is
+    #          exactly what DUPLICATE_RISK is for - and it bars a recovery
+    #          link outright, because sending one would charge them twice.
+    #
+    #          Razorpay documents that a bank can auto-refund without
+    #          changing payment status, so the API alone cannot settle
+    #          this. The customer's own reference can.
+    claim = _claim_assessment(evidence, latest)
+    if claim is not None and claim.match is ClaimMatch.CONFIRMS:
+        fired.append("R10b_customer_confirms_debit")
+        return result(Verdict.DUPLICATE_RISK, 0.9)
+
+    # -- R10c  They quoted a reference and it belongs to a different
+    #          payment. Their complaint is real but not about this order,
+    #          so it must not change this verdict - only be recorded.
+    if claim is not None and claim.match is ClaimMatch.CONTRADICTS:
+        fired.append("R10c_customer_reference_mismatch")
+
     # -- R11  The ambiguous zone: a debit may exist and the bank may still
     #         reverse it unaided. Wait out the RBI window (E14, I10).
     if src in AMBIGUOUS_SOURCES and latest.failed_at is not None:
@@ -392,6 +414,12 @@ def fold(
         # genuinely unresolvable from the API. Scenario D.
         if step in POST_DEBIT_STEPS:
             fired.append("R12_tat_expired_post_debit")
+            # An unverifiable debit claim is doubt, not evidence. It can
+            # lower confidence - never raise it - so a human sees the
+            # complaint without the system acting on an assertion.
+            if claim is not None and claim.match is ClaimMatch.UNVERIFIED:
+                fired.append("R12b_unverified_debit_claim")
+                return result(Verdict.UNRESOLVED, 0.35)
             return result(Verdict.UNRESOLVED, 0.45)
         fired.append("R13_tat_expired_pre_debit")
         return result(Verdict.CONFIRMED_FAILED, 0.9)
@@ -405,6 +433,26 @@ def fold(
 
     fired.append("R15_insufficient_evidence")
     return result(Verdict.UNRESOLVED, 0.4)
+
+
+def _claim_assessment(evidence: tuple[Evidence, ...], ps: PaymentState):
+    """Compare the customer's claim against this payment's identifiers.
+
+    The model extracted the claim; this comparison is deterministic. A
+    customer asserting a debit proves nothing - what makes it evidence is
+    whether the reference they quoted is the RRN on our payment.
+    """
+    for e in evidence:
+        if e.source != "customer_claim" or not e.available:
+            continue
+        value = e.value if isinstance(e.value, dict) else {}
+        claim = value.get("claim")
+        if claim is None:
+            continue
+        return assess_claim(
+            claim, ps.rrn, ps.upi_transaction_id, value.get("raw_text", "")
+        )
+    return None
 
 
 def _source_of(ps: PaymentState) -> ErrorSource:

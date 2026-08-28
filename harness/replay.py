@@ -95,6 +95,7 @@ class Replay:
             decision = await self.pipeline.process(
                 list(delivered), now, order_id=scenario.order_id,
                 seed_evidence=scenario.evidence,
+                extra=_extra_for(scenario),
             )
             step = ReplayStep(at=now, observation=obs, decision=decision)
             self.steps.append(step)
@@ -108,6 +109,7 @@ class Replay:
             final = await self.pipeline.process(
                 list(delivered), scenario.evaluate_at, order_id=scenario.order_id,
                 seed_evidence=scenario.evidence,
+                extra=_extra_for(scenario),
             )
             self.steps.append(ReplayStep(at=scenario.evaluate_at, observation=None, decision=final))
             if on_event:
@@ -145,6 +147,18 @@ class Replay:
             if rank >= best_rank:            # ties break toward the later one
                 best, best_rank = d, rank
         return best or self.final
+
+
+def _extra_for(scenario) -> dict:
+    """Fetch-context inputs a scenario carries but the event stream does not.
+
+    Customer messages arrive through a support inbox, not a webhook, so
+    they cannot be replayed as observations - they are fetched.
+    """
+    extra: dict = {}
+    if getattr(scenario, "customer_messages", None):
+        extra["customer_messages"] = list(scenario.customer_messages)
+    return extra
 
 
 async def _maybe_await(x):

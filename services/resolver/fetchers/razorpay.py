@@ -180,6 +180,33 @@ async def probe_bank_prior(ctx: FetchContext) -> Evidence:
     )
 
 
+
+
+async def probe_customer_messages(ctx: FetchContext) -> Evidence:
+    """Whatever the customer has written about this payment.
+
+    Support ticket bodies, email replies, a bank SMS they pasted in. This
+    is the only fetcher whose output a rule cannot read - it returns
+    prose, and prose is what the resolver's `interpret` node exists for.
+
+    STUBBED against fixture data. The live version reads the merchant's
+    support inbox or ticketing system; there is no Razorpay endpoint for
+    it, because it is not Razorpay's data.
+
+    Everything returned here is attacker-reachable (E16) and is only ever
+    handed to the model inside a delimited untrusted block.
+    """
+    messages = ctx.extra.get("customer_messages")
+    if not messages:
+        return Evidence.unavailable("customer_messages", "stub: no support inbox configured")
+    return Evidence(
+        source="customer_messages",
+        value={"messages": messages},
+        confidence=0.7,          # the message is real; its contents are claims
+        provenance="stub: merchant support inbox",
+    )
+
+
 FETCHERS: dict[str, Any] = {
     "payment": probe_payment,
     "attempts": probe_attempts,
@@ -187,6 +214,7 @@ FETCHERS: dict[str, Any] = {
     "history": probe_history,
     "settlement": probe_settlement,
     "bank_prior": probe_bank_prior,
+    "customer_messages": probe_customer_messages,
 }
 
 #: What the planner may choose from. Kept separate from FETCHERS so the

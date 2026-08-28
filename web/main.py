@@ -451,6 +451,8 @@ async def agents(
         d = await p.process(
             s.observations(), s.evaluate_at, order_id=s.order_id,
             seed_evidence=s.evidence,
+            extra={"customer_messages": list(s.customer_messages)}
+            if s.customer_messages else None,
         )
 
     intent = d.intent

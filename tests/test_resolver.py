@@ -169,3 +169,21 @@ async def _stub_downtime(ctx: FetchContext) -> Evidence:
         confidence=0.9,
         provenance="stub",
     )
+
+
+# ------------------------------------------------- unstructured --
+
+def test_plan_schema_covers_every_plannable_probe():
+    """A probe absent from the schema cannot be chosen by the model.
+
+    The graph would fall back to its fixed plan and still work, so the
+    omission is invisible in behaviour - which is exactly why it needs a
+    test rather than a review.
+    """
+    import typing
+
+    from services.resolver.fetchers.razorpay import PLANNABLE
+    from services.resolver.graph import Plan
+
+    inner = typing.get_args(Plan.model_fields["fetchers"].annotation)[0]
+    assert set(typing.get_args(inner)) == set(PLANNABLE)

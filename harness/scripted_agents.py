@@ -139,7 +139,22 @@ def scripted_fetchers(scenario) -> dict:
             return ev.model_copy(update={"provenance": f"fixture: {ev.provenance}"})
         return fetch
 
-    return {name: make(name) for name in by_source}
+    fetchers = {name: make(name) for name in by_source}
+
+    # Customer messages are not "evidence" in the fixture - they are raw
+    # prose the interpret node has to read. Serve them through the same
+    # fetcher interface the live support-inbox probe would use.
+    if getattr(scenario, "customer_messages", None):
+        async def messages(ctx):
+            return Evidence(
+                source="customer_messages",
+                value={"messages": list(scenario.customer_messages)},
+                confidence=0.7,
+                provenance="fixture: merchant support inbox",
+            )
+        fetchers["customer_messages"] = messages
+
+    return fetchers
 
 
 def scripted_probes(scenario) -> dict:

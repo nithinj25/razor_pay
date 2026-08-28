@@ -116,6 +116,10 @@ class Scenario:
     evidence: tuple[Evidence, ...] = ()
     note: str = ""
     expect_llm_calls: int | None = None
+    #: Free text the customer wrote. Only scenario G has any - it is the
+    #: input the `interpret` node exists for, and the one thing in this
+    #: system a deterministic rule genuinely cannot read.
+    customer_messages: list[str] = field(default_factory=list)
     checkpoints: list[tuple[int, Verdict]] = field(default_factory=list)
 
     def observations(self, until: int | None = None):
@@ -434,7 +438,48 @@ SCENARIO_F = Scenario(
     ],
 )
 
-ALL: list[Scenario] = [SCENARIO_A, SCENARIO_B, SCENARIO_C, SCENARIO_D, SCENARIO_E, SCENARIO_F]
+# --------------------------------------------------------------------
+# G - The customer says money left their account, and quotes a reference.
+#
+#     GUARDRAILS specifies six scenarios and D already mentions a customer
+#     email ("money debited, ref 230901495295") - but none of the six
+#     actually exercises reading it. This is that case, split out so the
+#     six labelled scenarios stay exactly as specified.
+#
+#     It is the only scenario a rule cannot resolve. The reference is
+#     embedded in ordinary prose, misspelt, hyphenated and surrounded by
+#     an amount and a date that a regex would happily mistake for it. A
+#     model extracts the claim; `assess_claim` then compares the quoted
+#     reference to the payment's own RRN, and that comparison - not the
+#     model - is what turns an assertion into evidence.
+# --------------------------------------------------------------------
+CUSTOMER_EMAIL = """hi team, i tried paying 2340 on 23/01 for my order but
+it showed failed. but money IS deducted from my hdfc account. checked
+statement, the ref no is 2309-0149-5295 and amount 2340 debited 23 Jan
+7:40pm. please refund or confirm, i dont want to pay again and get charged
+twice. account ending 4471."""
+
+SCENARIO_G = Scenario(
+    key="G",
+    title="Customer says they were debited, and quotes a reference",
+    order_id="order_D4nishchay04",          # same order as D, with the email
+    start=FRIDAY_EVENING,
+    evaluate_at=int(datetime(2026, 1, 28, 10, 0, 0, tzinfo=IST).timestamp()),
+    ground_truth=Verdict.DUPLICATE_RISK,
+    note=(
+        "The payment says failed; the customer's bank statement says the "
+        "money left. That is conflicting evidence about whether money "
+        "moved, and it bars a recovery link outright - sending one would "
+        "charge them a second time. Razorpay documents that a bank can "
+        "auto-refund without changing payment status, so the API alone "
+        "cannot settle this. The customer's own reference can."
+    ),
+    deliveries=list(SCENARIO_D.deliveries),
+    customer_messages=[CUSTOMER_EMAIL],
+)
+
+ALL: list[Scenario] = [SCENARIO_A, SCENARIO_B, SCENARIO_C, SCENARIO_D,
+                       SCENARIO_E, SCENARIO_F, SCENARIO_G]
 BY_KEY: dict[str, Scenario] = {s.key: s for s in ALL}
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -470,6 +515,7 @@ def write_fixtures() -> Path:
                     "ground_truth": s.ground_truth.value,
                     "note": s.note,
                     "evidence": [e.model_dump() for e in s.evidence],
+                    "customer_messages": s.customer_messages,
                     "timeline": timeline,
                 },
                 indent=2,

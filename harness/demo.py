@@ -64,7 +64,18 @@ async def run_nishchay(real_llm: bool = False) -> Run:
 
     for s in sc.ALL:
         ex = Executor(dry_run=True)
-        p = Pipeline(llm=llm, executor=ex)
+        resolver = strategist = None
+        if real_llm:
+            # Serve the fixture's evidence through the real fetcher and
+            # probe interfaces, so the agents gather rather than being
+            # handed everything up front.
+            from harness.scripted_agents import scripted_fetchers, scripted_probes
+            from services.resolver.graph import Resolver
+            from services.strategist.graph import Strategist
+
+            resolver = Resolver(llm=llm, fetchers=scripted_fetchers(s))
+            strategist = Strategist(llm=llm, probes=scripted_probes(s))
+        p = Pipeline(llm=llm, executor=ex, resolver=resolver, strategist=strategist)
         r = Replay(p)
         await r.run(s)
 
@@ -98,6 +109,13 @@ async def run_nishchay(real_llm: bool = False) -> Run:
                 "correct": got == s.ground_truth,
                 "confidence": round(final.verdict.confidence, 3),
                 "action": eff.action.value if eff else "NONE",
+                # The intervention, not just the verdict. E's whole point
+                # is choosing UPI over a generic retry - same verdict,
+                # different message - so verdict accuracy alone
+                # undersells what the strategist does.
+                "template": (eff.intent.template_id if eff and eff.intent else None),
+                "channel": (eff.intent.channel.value
+                            if eff and eff.intent and eff.intent.channel else None),
                 "status": eff.outcome.status if eff and eff.outcome else "-",
                 "rules": list(final.verdict.rules_fired),
                 "llm_calls": sum(st.decision.llm_calls for st in r.steps if st.decision),
@@ -222,10 +240,106 @@ def write_artifacts(run: Run, base: dict) -> Path:
     return ARTIFACTS / "results.json"
 
 
+def print_llm_delta(rules_only: Run, with_model: Run) -> None:
+    """What the model is actually worth, as a number.
+
+    "Was AI applied appropriately, or forced?" is a judging criterion, and
+    it deserves a measurement rather than an assertion. Running the same
+    labelled scenarios twice - once with the agents disabled - says
+    exactly which cases need a model and which do not.
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    con = Console()
+    t = Table(title="What the model is worth", header_style="bold")
+    t.add_column("Sc")
+    t.add_column("Scenario")
+    t.add_column("rules only")
+    t.add_column("with agents")
+    t.add_column("LLM", justify="right")
+
+    by_key = {r["scenario"]: r for r in with_model.rows}
+    for r in rules_only.rows:
+        w = by_key.get(r["scenario"], {})
+        gained = (not r["correct"]) and w.get("correct")
+        t.add_row(
+            r["scenario"],
+            r["title"][:30],
+            f"[green]{r['verdict']}[/green]" if r["correct"] else f"[red]{r['verdict']}[/red]",
+            f"[green]{w.get('verdict', '-')}[/green]" if w.get("correct")
+            else f"[red]{w.get('verdict', '-')}[/red]",
+            f"[bold cyan]+{w.get('llm_calls', 0)}[/bold cyan]" if gained
+            else str(w.get("llm_calls", 0)),
+        )
+    con.print(t)
+
+    gained = [
+        r["scenario"] for r in rules_only.rows
+        if not r["correct"] and by_key.get(r["scenario"], {}).get("correct")
+    ]
+    # Second axis: same verdict, different intervention. The strategist
+    # earns its place here even where the verdict never moves.
+    better_message = [
+        r["scenario"] for r in rules_only.rows
+        if r["correct"]
+        and by_key.get(r["scenario"], {}).get("template")
+        and by_key[r["scenario"]]["template"] != r.get("template")
+    ]
+    con.print(
+        f"\n[bold]rules only [/bold] {rules_only.correct}/{rules_only.total} correct, "
+        f"{rules_only.llm_calls} LLM calls"
+    )
+    con.print(
+        f"[bold]with agents[/bold] {with_model.correct}/{with_model.total} correct, "
+        f"{with_model.llm_calls} LLM calls"
+    )
+    if gained:
+        con.print(
+            f"\n[bold cyan]The model changes the verdict on {', '.join(gained)} "
+            f"and nothing else.[/bold cyan]"
+        )
+        con.print(
+            "[dim]That is the case whose evidence is prose - a customer "
+            "describing a debit in their own words, quoting a reference no "
+            "rule can extract. Every other verdict is settled "
+            "deterministically, by design.[/dim]"
+        )
+    if better_message:
+        rows = [(r, by_key[r]) for r in better_message]
+        con.print(
+            f"\n[bold cyan]It changes the intervention on "
+            f"{', '.join(better_message)}[/bold cyan] without changing the verdict:"
+        )
+        for key, w in rows:
+            was = next(x.get("template") or "-" for x in rules_only.rows
+                       if x["scenario"] == key)
+            con.print(f"  [dim]{key}:[/dim] {was} -> {w['template']} over {w['channel']}")
+        con.print(
+            "[dim]Same conclusion about the money, a different message to the "
+            "customer. A generic retry link on a rail that is currently down "
+            "fails again.[/dim]"
+        )
+    else:
+        con.print(
+            "\n[yellow]The model changed no verdict. Either the rules cover "
+            "every labelled case, or the agents are not running - check the "
+            "health badge on Screen 5.[/yellow]"
+        )
+
+
 async def main_async(args) -> None:
     base = bl.run_all()["_totals"]
     run = await run_nishchay(real_llm=args.real_llm)
     print_report(run, base)
+
+    if args.compare:
+        # Two full passes over the labelled set: one with the agents
+        # disabled, one with them live. The delta is the claim.
+        rules_only = run if not args.real_llm else await run_nishchay(real_llm=False)
+        with_model = run if args.real_llm else await run_nishchay(real_llm=True)
+        print_llm_delta(rules_only, with_model)
+
     p = write_artifacts(run, base)
     print(f"\nartifacts -> {p}")
 
@@ -237,7 +351,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Baseline vs nishchay, measured.")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--headless", action="store_true")
-    ap.add_argument("--real-llm", action="store_true", help="use the Anthropic API")
+    ap.add_argument("--real-llm", action="store_true", help="use the configured LLM provider")
+    ap.add_argument(
+        "--compare", action="store_true",
+        help="run twice, with and without the agents, and show the delta",
+    )
     asyncio.run(main_async(ap.parse_args()))
 
 

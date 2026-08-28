@@ -23,7 +23,9 @@ def client():
 
 def test_scenarios_listed(client):
     rows = client.get("/api/scenarios").json()
-    assert {r["key"] for r in rows} == {"A", "B", "C", "D", "E", "F"}
+    # A-F are GUARDRAILS' six. G is the unstructured-evidence case, split
+    # out so the specified six stay exactly as specified.
+    assert {r["key"] for r in rows} == {"A", "B", "C", "D", "E", "F", "G"}
     assert all(r["note"] for r in rows), "a scenario with no note explains nothing"
 
 

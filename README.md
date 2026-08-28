@@ -29,10 +29,10 @@ run time by `harness/demo.py` — none of it is written down as a constant.
 | False positives (link on a paid order) | **2** | **0** |
 | Revenue correctly recovered | ₹0.00 | ₹7,020.00 |
 | Escalated to a human | 0 | 1 |
-| Verdict accuracy | — | **6/6** |
+| Verdict accuracy | — | **7/7** with agents, 6/7 rules-only |
 | p95 time to verdict | — | 16 ms |
 | Chaos faults handled | — | **9/9** |
-| Tests | — | **141 passing** (incl. 8 integration) |
+| Tests | — | **168 passing** (incl. 8 integration) |
 
 The two zeros are **invariants, not percentiles**. One violation is a bug,
 and `harness/demo.py` exits non-zero if either moves.
@@ -45,6 +45,10 @@ and `harness/demo.py` exits non-zero if either moves.
 | D | Bank ambiguity over a long weekend | UNRESOLVED | UNRESOLVED | ESCALATE | 0* |
 | E | Method-scoped bank downtime | CONFIRMED_FAILED | CONFIRMED_FAILED | SEND_RECOVERY_LINK | 0* |
 | F | Prompt injection via `notes` | ORDER_SETTLED | ORDER_SETTLED | NOOP (vetoed) | 0 |
+| G | Customer says they were debited | DUPLICATE_RISK | DUPLICATE_RISK | HOLD | 4 |
+
+A–F are GUARDRAILS' six. **G is the unstructured-evidence case** — split
+out so the specified six stay exactly as specified.
 
 \* D and E reach the agents when a provider key is set — D for the
 escalation narrative, E for the strategist's template choice. Without a
@@ -166,6 +170,39 @@ Saturday (banks closed), the 25th a Sunday, the 26th Republic Day. The
 window closes **Tuesday the 27th** — 4.18× further out than `now + 86400`.
 Acting on the Saturday produces a duplicate charge.
 
+### What the model is actually worth
+
+`python -m harness.demo --compare --real-llm` runs the labelled set twice,
+once with the agents disabled:
+
+```
+rules only   6/7 correct,  0 LLM calls
+with agents  7/7 correct, 23 LLM calls
+
+The model changes the verdict on G and nothing else.
+It changes the intervention on E without changing the verdict:
+  E: RCV_RETRY -> RCV_UPI_ALT over WHATSAPP
+```
+
+That is the honest answer to "was AI applied appropriately, or forced?",
+and it is measured rather than asserted.
+
+**G is the case a rule cannot do.** A customer writes, in their own words,
+that money left their account, and quotes a reference — hyphenated,
+buried in prose, next to an amount and a date a regex would happily
+mistake for it. The model extracts a `CustomerClaim`; then
+`core/claims.py::assess_claim`, which contains no model call, compares
+that reference against the payment's own RRN. A customer *asserting* a
+debit proves nothing — people misremember, and a support inbox is
+attacker-reachable. What makes it evidence is that the digits match.
+Verdict flips `UNRESOLVED → DUPLICATE_RISK → HOLD`, which bars the
+recovery link outright: sending one would charge them a second time.
+
+**E is the case where the verdict is right either way but the message is
+not.** A generic retry link on a rail that is currently down fails again.
+
+Everything else is deterministic, deliberately.
+
 ### Injection defence is structural, not prompt engineering
 
 TRAI/DLT requires pre-registered templates capped at 5 variables of 30
@@ -186,7 +223,7 @@ docker compose up -d                  # postgres · redis · redpanda · clickho
 python -m harness.demo --all          # accuracy, confusion matrix, veto log
 python -m harness.chaos --all         # 9 fault injections
 python -m harness.baseline            # the before-number, on its own
-pytest -q                             # 141 tests, ScriptedLLM only
+pytest -q                             # 168 tests, ScriptedLLM only
                                       #   integration tests skip when
                                       #   Docker is not up
 

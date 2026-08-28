@@ -7,6 +7,7 @@
   "ground_truth": "CONFIRMED_FAILED",
   "note": "RBI's attributable-to-customer test: a cancelled payment was never a debit, so there is nothing to reverse and nothing to wait for. Target verdict in under 2s.",
   "evidence": [],
+  "customer_messages": [],
   "timeline": [
     {
       "at": 3,

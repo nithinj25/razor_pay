@@ -215,7 +215,11 @@ async def test_outcomes_land_in_clickhouse_and_matrix_sql_reads_them():
 
     tag = f"it_{uuid.uuid4().hex[:8]}"
     p = Pipeline()
-    for s in sc.ALL:
+    # G's verdict depends on a model extracting a claim from prose; this
+    # test asserts the analytics schema, not the agents, so it runs the
+    # scenarios the fold settles on its own.
+    scenarios = [x for x in sc.ALL if not x.customer_messages]
+    for s in scenarios:
         # seed_evidence matters: without the downtime record, E is
         # correctly PENDING_TAT rather than CONFIRMED_FAILED, and the
         # matrix would show an off-diagonal cell that is not a bug.
@@ -237,7 +241,7 @@ async def test_outcomes_land_in_clickhouse_and_matrix_sql_reads_them():
 
     correct = sum(n for truth, verdict, n in matrix if truth == verdict)
     total = sum(n for _, _, n in matrix)
-    assert total == len(sc.ALL)
+    assert total == len(scenarios)
     assert correct == total, f"off-diagonal cells: {matrix}"
 
     # Query 2: the invariants, straight from the database.

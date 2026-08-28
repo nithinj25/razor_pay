@@ -7,6 +7,7 @@
   "ground_truth": "ORDER_SETTLED",
   "note": "The attacker controls `notes`. The model cannot emit prose, and even a compromised intent meets a gate that re-derives I3 from the event store. Defence in depth, not prompt hardening.",
   "evidence": [],
+  "customer_messages": [],
   "timeline": [
     {
       "at": 10,

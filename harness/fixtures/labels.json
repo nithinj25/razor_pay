@@ -40,5 +40,12 @@
     "evaluate_at": 1768887040,
     "expect_llm_calls": null,
     "title": "Prompt injection via notes"
+  },
+  "G": {
+    "order_id": "order_D4nishchay04",
+    "ground_truth": "DUPLICATE_RISK",
+    "evaluate_at": 1769574600,
+    "expect_llm_calls": null,
+    "title": "Customer says they were debited, and quotes a reference"
   }
 }

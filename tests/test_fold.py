@@ -71,7 +71,32 @@ def test_lww_would_fail():
 
 # ------------------------------------------------------- ground truth --
 
-@pytest.mark.parametrize("s", sc.ALL, ids=[s.key for s in sc.ALL])
+#: G is deliberately absent: its verdict depends on a claim extracted from
+#: a customer's prose, which only the resolver's `interpret` node can
+#: produce. Folding it without that evidence gives D's answer - correctly,
+#: and that is the point. G is covered by
+#: test_customer_confirming_a_debit_blocks_the_link and end to end in
+#: test_resolver.
+FOLD_ONLY_SCENARIOS = [s for s in sc.ALL if not s.customer_messages]
+
+
+def test_scenario_G_needs_the_resolver_not_just_the_fold():
+    """The one scenario a rule cannot settle on its own.
+
+    Without the extracted claim, G folds to exactly D's verdict. The
+    customer's email is the only evidence that separates them, and no
+    rule can read it.
+    """
+    g = sc.BY_KEY["G"]
+    assert g.customer_messages, "G must carry the customer's message"
+    bare = fold(g.observations(), g.evaluate_at, order_id=g.order_id)
+    assert bare.verdict == Verdict.UNRESOLVED
+    assert bare.verdict != g.ground_truth
+
+
+@pytest.mark.parametrize(
+    "s", FOLD_ONLY_SCENARIOS, ids=[s.key for s in FOLD_ONLY_SCENARIOS]
+)
 def test_scenario_matches_ground_truth(s):
     v = fold(s.observations(), s.evaluate_at, order_id=s.order_id, evidence=s.evidence)
     assert v.verdict == s.ground_truth, f"{s.key}: {s.title}\nrules={v.rules_fired}"
@@ -198,3 +223,73 @@ def test_event_time_not_received_at_drives_order():
     assert by_arrival[0].event_type == "payment.captured"
     assert by_event_time[0].event_type == "payment.failed"
     assert by_arrival != by_event_time, "fixture no longer exercises the inversion"
+
+
+# ----------------------------------------- customer claims (G) --
+
+def test_customer_confirming_a_debit_blocks_the_link():
+    """Scenario G. The payment says failed; the customer's bank says the
+    money left, and the reference they quote is this payment's RRN.
+
+    That is conflicting evidence about whether money moved, which is what
+    DUPLICATE_RISK is for - and it bars a recovery link outright, because
+    sending one would charge them a second time.
+    """
+    from core.claims import CustomerClaim
+
+    s = sc.BY_KEY["G"]
+    claim = CustomerClaim(
+        claims_debited=True, reference="2309-0149-5295",
+        claimed_amount_rupees=2340.0, confidence=0.9,
+    )
+    ev = (Evidence(source="customer_claim",
+                   value={"claim": claim, "raw_text": sc.CUSTOMER_EMAIL},
+                   confidence=0.9, provenance="test"),)
+
+    v = fold(s.observations(), s.evaluate_at, order_id=s.order_id, evidence=ev)
+    assert v.verdict == Verdict.DUPLICATE_RISK
+    assert "R10b_customer_confirms_debit" in v.rules_fired
+    assert v.proposed_action.value == "HOLD"
+
+
+def test_a_mismatched_reference_does_not_move_the_verdict():
+    """They are describing a different transaction. Record it, act on nothing."""
+    from core.claims import CustomerClaim
+
+    s = sc.BY_KEY["G"]
+    claim = CustomerClaim(claims_debited=True, reference="111122223333", confidence=0.9)
+    ev = (Evidence(source="customer_claim", value={"claim": claim, "raw_text": ""},
+                   confidence=0.9, provenance="test"),)
+
+    v = fold(s.observations(), s.evaluate_at, order_id=s.order_id, evidence=ev)
+    assert v.verdict == Verdict.UNRESOLVED
+    assert "R10c_customer_reference_mismatch" in v.rules_fired
+
+
+def test_an_unverifiable_claim_lowers_confidence_but_decides_nothing():
+    """A claim with no checkable reference is doubt, not evidence.
+
+    It must be able to lower confidence and never to raise it - otherwise
+    anyone who emails "I was charged" can steer the system.
+    """
+    from core.claims import CustomerClaim
+
+    s = sc.BY_KEY["G"]
+    claim = CustomerClaim(claims_debited=True, reference=None, confidence=0.9)
+    ev = (Evidence(source="customer_claim", value={"claim": claim, "raw_text": "money gone"},
+                   confidence=0.9, provenance="test"),)
+
+    bare = fold(s.observations(), s.evaluate_at, order_id=s.order_id)
+    v = fold(s.observations(), s.evaluate_at, order_id=s.order_id, evidence=ev)
+
+    assert v.verdict == Verdict.UNRESOLVED == bare.verdict
+    assert v.confidence < bare.confidence
+    assert "R12b_unverified_debit_claim" in v.rules_fired
+
+
+def test_a_failure_complaint_is_not_a_debit_claim():
+    """"My payment failed" must not be read as "money left my account"."""
+    from core.claims import ClaimMatch, CustomerClaim, assess_claim
+
+    claim = CustomerClaim(claims_debited=False, reference="230901495295", confidence=0.9)
+    assert assess_claim(claim, "230901495295").match is ClaimMatch.NONE
