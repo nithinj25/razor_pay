@@ -6,8 +6,8 @@ then a single ReAct agent that died on token bloat, before arriving at
 the Planner/Fetchers/Analyzer split. This file is the same discipline.
 
 Each entry states what we built, what broke it, and what replaced it.
-Entries 4 and 5 were found *during* implementation, by a test — those
-are the honest ones.
+Entries 4, 5, 8, 9 and 10 were found *during* implementation - by a test, or
+by running the thing against a real phone. Those are the honest ones.
 
 ---
 
@@ -185,3 +185,103 @@ the field's absence, so it cannot be reintroduced quietly.
 | LLM-generated message text | Illegal under DLT before it is unsafe: templates must be pre-registered. Template selection is both the compliant and the injection-proof design. |
 | Polling Razorpay instead of webhooks | Cost, and it does not solve ordering — a poller sees the same inverted reality, just later. |
 | ClickHouse from day 1 | Kept, but the slip protocol drops it for Postgres. Outcome analytics at six scenarios do not need a columnar store. |
+
+---
+
+## 8. Freeform WhatsApp messages
+
+**Built:** the executor sent the rendered template body as a plain
+`type: text` WhatsApp message. It worked — a real recovery message with a
+real payment link arrived on a real phone.
+
+**What broke it:** it only worked because the recipient had messaged the
+business first. WhatsApp permits business-initiated freeform **only inside
+a 24-hour window the customer opens**. A customer who has just failed a
+payment and closed the tab has opened no such window.
+
+So the code worked in every test — because we had been poking at the
+thread — and would have failed for every real customer. Worse, Meta
+accepts the send and returns a message id either way, so nothing in the
+system would have noticed. We only found it because a human checked their
+phone and said "nope, didn't get it", and then the *template* test message
+arrived while the freeform one did not.
+
+**Replaced with:** registered templates sent with positional parameters,
+falling back to freeform only for messages Meta does not know.
+
+**The part worth saying in review:** WhatsApp and DLT impose the same rule
+from two different regulators — pre-register the message, fill the slots,
+never generate prose. The architecture already worked that way for TRAI
+reasons. WhatsApp confirmed it independently.
+
+---
+
+## 9. `EXECUTED` meaning "the API accepted it"
+
+**Built:** the executor recorded `EXECUTED` when the WhatsApp API returned
+2xx with a message id.
+
+**What broke it:** Meta returns a message id for messages it later fails
+to deliver. The outcome store therefore contained a confident record of a
+message that did not exist. For a project whose central claim is *every
+money action is explainable and auditable*, an audit trail that records
+intentions rather than outcomes is not an audit trail.
+
+**Replaced with:** `services/ingress/whatsapp_hook.py` receives Meta's
+status webhook — `sent`, `delivered`, `read`, `failed` with a reason —
+verified over `X-Hub-Signature-256` against the raw body, the same
+discipline as the Razorpay ingress. Receipts persist beside outcomes and
+vetoes.
+
+**Why this entry exists:** it is the clearest instance of the thing the
+track brief asks about — *how were runtime failures identified and handled*
+— and it was found by running the system, not by reviewing it.
+
+---
+
+## 10. Confidence floors read as "how sure are we what happened"
+
+**Built:** a single confidence floor per action, scaled by
+irreversibility. `VOICE_CALL` sat at 0.85 because a call cannot be
+un-made.
+
+**What broke it:** the voice path, once it was actually wired. A call to
+*elicit evidence* is triggered by `UNRESOLVED` — a verdict whose
+confidence is low **by definition**, because that is what unresolved
+means. Requiring 0.85 confidence in the verdict before phoning the
+customer forbids the call in precisely the situation the call exists for.
+Scenario D produced `VOICE_CALL` at confidence 0.45 and the gate vetoed
+it, correctly by the letter of the rule and uselessly in practice.
+
+**Replaced with:** the floor still applies, but on this one path the
+number means *confidence that a call is the right instrument*, which
+`should_offer_voice` establishes deterministically before the model is
+involved at all. The rule that decides whether to call is separate from
+the number that describes what happened.
+
+**Two neighbouring bugs the same wiring exposed:** the implicit-consent
+window (72h, for `SERVICE_IMPLICIT` messages) was being applied to a call
+running on explicit consent, which has its own stricter 7-day rule; and
+DLT template registration was demanded of a voice call, which has no
+template because it is a conversation composed per case. Both vetoed every
+call. Neither was visible until something actually tried to make one.
+
+---
+
+## 11. Letting a regex find the customer's reference
+
+**Considered and not built.** Scenario G's email contains
+`ref no is 2309-0149-5295`, an amount of `2340`, and a date `23/01` — and
+in other phrasings, an account number, a time, and an order id. A digit-run
+regex finds several candidates and cannot rank them; worse, it cannot tell
+`2340 debited` from a reference at all.
+
+The model extracts the claim because that is language work. But
+`core/claims.py::assess_claim` — which decides whether the claim is
+*evidence* — contains no model call: it compares the quoted digits against
+the payment's own RRN. A regex survives as a deterministic backstop for
+the case where the model misses a reference that is plainly present, and
+it only ever proposes candidates the payment already knows about.
+
+The division is the same one used everywhere else here: **the model
+extracts, the rules decide.**

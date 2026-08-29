@@ -32,7 +32,7 @@ run time by `harness/demo.py` — none of it is written down as a constant.
 | Verdict accuracy | — | **7/7** with agents, 6/7 rules-only |
 | p95 time to verdict | — | 16 ms |
 | Chaos faults handled | — | **9/9** |
-| Tests | — | **168 passing** (incl. 8 integration) |
+| Tests | — | **185 passing** (incl. 8 integration) |
 
 The two zeros are **invariants, not percentiles**. One violation is a bug,
 and `harness/demo.py` exits non-zero if either moves.
@@ -223,7 +223,7 @@ docker compose up -d                  # postgres · redis · redpanda · clickho
 python -m harness.demo --all          # accuracy, confusion matrix, veto log
 python -m harness.chaos --all         # 9 fault injections
 python -m harness.baseline            # the before-number, on its own
-pytest -q                             # 168 tests, ScriptedLLM only
+pytest -q                             # 185 tests, ScriptedLLM only
                                       #   integration tests skip when
                                       #   Docker is not up
 
@@ -374,8 +374,20 @@ measured accuracy against labelled scenarios.
 
 **Out, and stated rather than hidden:** multi-merchant scale · fraud
 scoring and route optimisation (Vulcan's domain) · the real-time
-authorisation path · working voice telephony (intent and compliance gate
-are built, the telephony is stubbed) · B2B receivables · mandate repair.
+authorisation path · B2B receivables · mandate repair.
+
+**Voice is built, gated, and stubbed at the dialer.** A call is offered
+only on `UNRESOLVED` or `DUPLICATE_RISK` and only when we hold a reference
+to read back — because the trigger is *evidence-type*: that is the one
+case where the missing fact is in the customer's head rather than in an
+API. The brief (what to ask, in what order, and what the caller must not
+assert) is composed per case; consent age, calling hours and the
+confidence floor all bind. Telephony is the stub, not the reasoning.
+
+```bash
+python -m harness.live hook-whatsapp <tunnel-url> <waba-id>   # delivery receipts
+python -m harness.live templates <waba-id>                    # register templates
+```
 
 **Known limitations.** The Payment Downtime API is not enabled by default
 and needs a Razorpay support request, so scenario E runs from fixture

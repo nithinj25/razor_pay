@@ -139,6 +139,7 @@ class Executor:
         merchant: str = "Acme Store",
         contact: str = "",
         email: str = "",
+        voice_brief: Any = None,
     ) -> Outcome:
         base = dict(order_id=order_id, payment_id=payment_id, idem_key=decision.idem_key)
 
@@ -222,12 +223,27 @@ class Executor:
 
             if action == Action.VOICE_CALL:
                 # Designed, gated, stubbed. The reasoning is real; the
-                # telephony is not (GUARDRAILS section 6).
+                # telephony is not (GUARDRAILS section 6). The brief is
+                # recorded in full - it is the deliverable here, and a
+                # human can work the call from it as it stands.
+                brief = {}
+                if voice_brief is not None:
+                    brief = {
+                        "objective": voice_brief.objective,
+                        "questions": list(voice_brief.questions),
+                        "reference_to_confirm": voice_brief.reference_to_confirm,
+                        "do_not_say": list(voice_brief.do_not_say),
+                    }
+                self.exception_queue.append({
+                    "order_id": order_id, "payment_id": payment_id,
+                    "amount": amount, "reason": intent.reasoning,
+                    "voice_brief": brief, "at": int(time.time()),
+                })
                 return self._record(
                     Outcome(**base, action=action, status="STUBBED",
-                            detail="voice intent logged; telephony not implemented",
-                            request={"template": intent.template_id,
-                                     "variables": list(intent.variables)})
+                            detail=(f"voice brief prepared, telephony not implemented"
+                                    f" - {len(brief.get('questions', []))} questions"),
+                            request=brief)
                 )
 
             return self._record(

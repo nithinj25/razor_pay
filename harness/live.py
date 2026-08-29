@@ -237,6 +237,44 @@ _EXAMPLES = {
 }
 
 
+async def register_whatsapp_hook(public_url: str, waba_id: str) -> dict:
+    """Subscribe Meta's status webhook to our tunnel.
+
+    Without this, `EXECUTED` means "the API accepted it" - which live
+    testing proved can be false. Meta returned a message id for a message
+    that was never delivered, and a human checking their phone was the
+    only thing that caught it. Delivery receipts turn that into a fact.
+    """
+    cfg = settings()
+    callback = public_url.rstrip("/") + "/webhook/whatsapp"
+    async with httpx.AsyncClient(
+        base_url="https://graph.facebook.com/v21.0",
+        headers={"Authorization": f"Bearer {cfg.whatsapp_access_token}"},
+        timeout=40,
+    ) as c:
+        # The app-level subscription carries the callback; the WABA-level
+        # one says which account's events to send. Both are required, and
+        # missing either produces silence rather than an error.
+        app_id = cfg.whatsapp_app_id
+        if app_id:
+            r = await c.post(f"/{app_id}/subscriptions", data={
+                "object": "whatsapp_business_account",
+                "callback_url": callback,
+                "verify_token": cfg.whatsapp_verify_token,
+                "fields": "messages",
+            })
+            if r.status_code >= 400:
+                return {"ok": False, "step": "app subscription",
+                        "detail": r.text[:300], "callback": callback}
+        r = await c.post(f"/{waba_id}/subscribed_apps")
+        return {
+            "ok": r.status_code < 400,
+            "step": "waba subscription",
+            "detail": r.text[:200],
+            "callback": callback,
+        }
+
+
 # ------------------------------- doctor -------------------------------
 
 async def doctor(url: str) -> int:
@@ -405,6 +443,15 @@ async def main_async(args) -> int:
             print(f"  {w['id']:<18} {'active' if w.get('active') else 'INACTIVE':<9} {w['url']}")
         return 0
 
+    if args.cmd == "hook-whatsapp":
+        out = await register_whatsapp_hook(args.url_public, args.waba)
+        print(f"  callback : {out['callback']}")
+        print(f"  step     : {out['step']}")
+        print(f"  result   : {'OK' if out['ok'] else 'FAILED'}  {out['detail']}")
+        if out["ok"]:
+            print("\n  Delivery receipts will now arrive at /api/delivery.")
+        return 0 if out["ok"] else 1
+
     if args.cmd == "templates":
         rows = await register_whatsapp_templates(args.waba)
         for r in rows:
@@ -455,6 +502,10 @@ def main() -> None:
     h.add_argument("url_public", nargs="?",
                    help="public tunnel base URL; omit to just list")
     h.add_argument("--delete", metavar="HOOK_ID")
+
+    hw = sub.add_parser("hook-whatsapp", help="subscribe Meta delivery receipts")
+    hw.add_argument("url_public", help="public tunnel base URL")
+    hw.add_argument("waba", help="WhatsApp Business Account ID")
 
     t = sub.add_parser("templates", help="register the DLT templates with Meta")
     t.add_argument("waba", help="WhatsApp Business Account ID")

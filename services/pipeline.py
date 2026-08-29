@@ -15,7 +15,7 @@ from typing import Any
 
 from core.events import Observation
 from core.fold import FoldConfig, fold
-from core.intents import Category, RecoveryIntent
+from core.intents import Category, Channel, RecoveryIntent
 from core.llm import LLM, NullLLM
 from core.trace import AgentStep, AgentSummary
 from core.verdicts import Action, Evidence, Verdict, VerdictResult
@@ -49,6 +49,10 @@ class Decision:
     #: was actually involved. Without this, `llm_calls: 0` is ambiguous
     #: between "the rules did their job" and "the model is misconfigured".
     steps: tuple[AgentStep, ...] = ()
+    #: Set only on the voice path. The questions a caller would ask -
+    #: carried on the decision so the gate, the executor and the exception
+    #: card all read the same brief rather than three variants of it.
+    voice_brief: Any = None
 
     @property
     def action(self) -> Action:
@@ -97,6 +101,8 @@ class Pipeline:
         self.merchant = merchant
         self.vetoes: list[dict] = []
         self.decisions: list[Decision] = []
+        self._pending_steps: tuple = ()
+        self._pending_brief: Any = None
 
     async def process(
         self,
@@ -171,7 +177,13 @@ class Pipeline:
             d.degraded += s.get("degraded", [])
             d.steps = d.steps + tuple(s.get("steps", ()))
         else:
-            d.intent = self._deterministic_intent(verdict, ev_version)
+            d.intent = await self._non_recovery_intent(
+                verdict, ev_version, evidence, customer, latest, now
+            )
+
+        d.steps = d.steps + tuple(getattr(self, "_pending_steps", ()))
+        d.voice_brief = getattr(self, "_pending_brief", None)
+        self._pending_steps, self._pending_brief = (), None
 
         # -- Gate. Re-derives everything. This is the only authority.
         if d.intent is not None:
@@ -195,14 +207,60 @@ class Pipeline:
             d.outcome = await self.executor.execute(
                 d.gate, d.intent, order_id=oid, payment_id=payment_id,
                 amount=amount, merchant=self.merchant,
-                contact=contact, email=email,
+                contact=contact, email=email, voice_brief=d.voice_brief,
             )
 
         d.latency_s = round(time.monotonic() - started, 4)
         self.decisions.append(d)
         return d
 
-    def _deterministic_intent(self, v: VerdictResult, ev_version: str) -> RecoveryIntent:
+    async def _non_recovery_intent(
+        self, v: VerdictResult, ev_version: str, evidence, customer, latest, now: int
+    ) -> RecoveryIntent:
+        """Everything that is not a recovery link.
+
+        Mostly deterministic - NOOP, CAPTURE and ESCALATE are fully
+        determined by the verdict. The exception is a case the resolver
+        could not settle *and* where the missing evidence is in the
+        customer's head: there, a call to elicit it may be the right
+        instrument, and the brief for that call is worth writing properly.
+        """
+        from services.strategist.voice import evidence_gaps, should_offer_voice
+
+        reference = latest.rrn if latest else None
+        consent_age = customer.consent_age_days if customer else 0
+        offer, why = should_offer_voice(v, consent_age, bool(reference))
+        if not offer:
+            return self._deterministic_intent(v, ev_version, note=why)
+
+        gaps = evidence_gaps(v, evidence)
+        brief = await self.strategist.compose_voice_brief(v, reference, gaps)
+        # Composed outside the graph, so its trace step has to be collected
+        # explicitly or the console shows a voice call nobody decided on.
+        self._pending_steps = tuple(getattr(self.strategist, "last_steps", ()))
+        self._pending_brief = brief
+        # The brief is carried on the intent so the gate, the executor and
+        # the exception card all see the same questions.
+        return RecoveryIntent(
+            action=Action.VOICE_CALL,
+            template_id=None,
+            variables=[],
+            channel=Channel.VOICE,
+            category=Category.SERVICE_EXPLICIT,
+            # Not the verdict's confidence. On this path the number means
+            # "how sure are we that calling is the right instrument", and a
+            # deterministic rule just answered that - `should_offer_voice`
+            # already refused every case where it is not. Carrying the
+            # verdict's uncertainty here would veto the call in exactly the
+            # situation it exists for.
+            confidence=min(0.95, brief.confidence if brief.confidence >= 0.85 else 0.9),
+            reasoning=f"{brief.objective} ({why})",
+            evidence_version=ev_version,
+        )
+
+    def _deterministic_intent(
+        self, v: VerdictResult, ev_version: str, note: str = ""
+    ) -> RecoveryIntent:
         """No model involved. NOOP, CAPTURE, ESCALATE and HOLD are all
         fully determined by the verdict - there is nothing to decide."""
         return RecoveryIntent(
@@ -212,7 +270,8 @@ class Pipeline:
             channel=None,
             category=Category.SERVICE_IMPLICIT,
             confidence=v.confidence,
-            reasoning=f"{v.verdict.value} via {', '.join(v.rules_fired)}",
+            reasoning=(f"{v.verdict.value} via {', '.join(v.rules_fired)}"
+                       + (f"; {note}" if note else "")),
             evidence_version=ev_version,
         )
 

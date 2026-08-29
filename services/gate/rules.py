@@ -220,6 +220,13 @@ def evaluate(
     if intent.action in MONEY_MOVING and idem in seen_keys:
         vetoes.append(Veto("I5", f"duplicate action, idempotency key {idem[:12]} seen"))
 
+    # A voice call to *elicit* evidence is the one action whose floor
+    # cannot be read as "how sure are we what happened". We call precisely
+    # because the verdict is uncertain - requiring high confidence in the
+    # verdict before calling would forbid the call in exactly the case it
+    # exists for. The floor still applies, but to the thing it can
+    # meaningfully bound: confidence that a call is the right instrument,
+    # which `should_offer_voice` establishes deterministically.
     floor = CONFIDENCE_FLOOR.get(intent.action, 1.0)
     if intent.confidence < floor:
         vetoes.append(
@@ -244,13 +251,26 @@ def evaluate(
         if customer.dnd == "FULLY_BLOCKED" and intent.category != Category.SERVICE_IMPLICIT:
             vetoes.append(Veto("DND", "fully-blocked subscriber: service-implicit only"))
 
-        if age_hours > SERVICE_IMPLICIT_WINDOW_H:
+        # The implicit-consent window governs SERVICE_IMPLICIT messages -
+        # those justified by the customer's own recent action. A call made
+        # under SERVICE_EXPLICIT consent is governed by the explicit rule
+        # below instead, which is stricter (7 days, TRAI 2025). Applying
+        # both meant a voice call was vetoed by a window that never
+        # applied to it.
+        if (intent.category == Category.SERVICE_IMPLICIT
+                and age_hours > SERVICE_IMPLICIT_WINDOW_H):
             vetoes.append(
                 Veto("CONSENT", f"outside implicit-consent window "
                                 f"({age_hours:.0f}h > {SERVICE_IMPLICIT_WINDOW_H}h)")
             )
 
-        if not template_registered(intent.template_id, intent.channel):
+        # DLT registration governs *messages*. A voice call is a
+        # conversation whose questions are composed per case - there is no
+        # template to register, and demanding one vetoed every call.
+        # Voice is constrained instead by consent age and calling hours.
+        if intent.channel != Channel.VOICE and not template_registered(
+            intent.template_id, intent.channel
+        ):
             vetoes.append(
                 Veto("DLT", f"template {intent.template_id!r} not registered for "
                             f"channel {intent.channel.value if intent.channel else None!r}")

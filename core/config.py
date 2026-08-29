@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str = ""
     #: Echoed back during Meta's subscription handshake.
     whatsapp_verify_token: str = "nishchay_verify_token"
+    #: Meta app id. Needed only to subscribe the delivery-receipt webhook;
+    #: sending messages does not use it.
+    whatsapp_app_id: str = ""
 
     postgres_dsn: str = "postgresql://nishchay:nishchay@localhost:5432/nishchay"
     redis_url: str = "redis://localhost:6379"

@@ -165,6 +165,8 @@ class Strategist:
         self.usage = getattr(self.llm, "usage", Usage())
         self.probes = probes or {}
         self._source = "scripted" if type(self.llm).__name__ == "ScriptedLLM" else "model"
+        #: Steps from calls made outside the graph, so the trace still sees them.
+        self.last_steps: tuple = ()
         self.app = self._build(checkpointer)
 
 
@@ -316,6 +318,51 @@ class Strategist:
                 "degraded": state.get("degraded", []) + [f"compose: {e}"],
                 "steps": (step,),
             }
+
+    async def compose_voice_brief(self, verdict, reference, gaps):
+        """What to ask a customer whose evidence no API can supply.
+
+        Kept off the LangGraph loop deliberately: there is nothing to
+        branch on. The decision to call was already made by a rule, and
+        this is a single piece of writing - questions that elicit
+        checkable facts rather than recollection.
+        """
+        from services.strategist.voice import (
+            VOICE_SYSTEM, VoiceBrief, fallback_brief,
+        )
+
+        t0 = time.monotonic()
+        user = (
+            f"<verdict>{verdict.verdict.value} @ {verdict.confidence:.2f}</verdict>\n"
+            f"<reference_we_hold>{reference or 'none'}</reference_we_hold>\n"
+            f"<what_we_could_not_establish>{gaps}</what_we_could_not_establish>\n"
+            f"<amount_rupees>{verdict.amount_due // 100}</amount_rupees>"
+        )
+        try:
+            brief: VoiceBrief = await self.llm.structured(
+                VoiceBrief, VOICE_SYSTEM, user, node="voice_brief", temperature=0.3
+            )
+            self.last_steps = (AgentStep(
+                agent="strategist", node="voice_brief", source=self._source,
+                model=self._answering_model(), summary=brief.objective,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                prompt_chars=len(VOICE_SYSTEM) + len(user),
+                tokens_in=len(VOICE_SYSTEM + user) // 4,
+                output={"questions": brief.questions,
+                        "reference_to_confirm": brief.reference_to_confirm,
+                        "do_not_say": brief.do_not_say},
+            ),)
+            return brief
+        except LLMUnavailable as e:
+            # A call that happens without a model must still ask the right
+            # questions - degrading to a worse conversation with a real
+            # person is not an acceptable fallback.
+            self.last_steps = (AgentStep(
+                agent="strategist", node="voice_brief", source="fallback",
+                summary="model unavailable - standard evidence-elicitation questions",
+                latency_ms=int((time.monotonic() - t0) * 1000), error=str(e),
+            ),)
+            return fallback_brief(verdict, reference, gaps)
 
     # ---------------------------- assembly ----------------------------
 
