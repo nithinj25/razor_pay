@@ -90,3 +90,46 @@ def test_metrics_endpoint(client):
         h = r.json()["headline"]
         assert h["nishchay_duplicate_orders"] == 0
         assert h["nishchay_false_positives"] == 0
+
+
+# ----------------------------------------- merchant dashboard --
+
+def test_orders_list_covers_every_scenario(client):
+    """The merchant view answers 'what happened to my orders?'"""
+    d = client.get("/api/orders").json()
+    assert d["count"] == 7
+    assert d["source"] in ("live", "scenarios")
+
+    by_id = {o["order_id"]: o for o in d["orders"]}
+    assert by_id["order_A1nishchay01"]["verdict"] == "ORDER_SETTLED"
+    assert by_id["order_A1nishchay01"]["action"] == "NOOP"
+    # Every row carries what a merchant needs to triage at a glance.
+    for o in d["orders"]:
+        assert o["verdict"] and o["action"]
+        assert "health" in (o["agents"] or {})
+
+
+def test_order_detail_carries_the_agent_trace(client):
+    """A merchant asking 'what did the agent do' needs the steps, not
+    just the conclusion."""
+    d = client.get("/api/orders/order_G7nishchay07").json()
+    assert d["order_id"] == "order_G7nishchay07"
+    assert d["observations"], "no events to show"
+    assert d["customer_messages"], "G's whole point is the customer's email"
+
+    latest = d["latest"]
+    assert latest["verdict"]
+    assert "steps" in latest and "agents" in latest
+    assert latest["triage"]["route"]
+
+
+def test_order_detail_404s_for_an_unknown_order(client):
+    assert client.get("/api/orders/order_does_not_exist").status_code == 404
+
+
+def test_settled_order_shows_no_agent_steps(client):
+    """A rules-only order should say so rather than showing an empty
+    trace that looks like a failure."""
+    d = client.get("/api/orders/order_A1nishchay01").json()
+    assert d["latest"]["agents"]["health"] == "rules-only"
+    assert d["latest"]["agents"]["model_calls"] == 0

@@ -453,6 +453,19 @@ SCENARIO_F = Scenario(
 #     reference to the payment's own RRN, and that comparison - not the
 #     model - is what turns an assertion into evidence.
 # --------------------------------------------------------------------
+def _rekey(body: dict, order_id: str) -> dict:
+    """Same events, different order. G reuses D's timeline deliberately -
+    the only thing that differs is that a customer wrote in."""
+    import copy
+
+    out = copy.deepcopy(body)
+    ent = out.get("payload", {}).get("payment", {}).get("entity", {})
+    if ent:
+        ent["order_id"] = order_id
+        ent["id"] = ent.get("id", "").replace("D1", "G1")
+    return out
+
+
 CUSTOMER_EMAIL = """hi team, i tried paying 2340 on 23/01 for my order but
 it showed failed. but money IS deducted from my hdfc account. checked
 statement, the ref no is 2309-0149-5295 and amount 2340 debited 23 Jan
@@ -462,7 +475,10 @@ twice. account ending 4471."""
 SCENARIO_G = Scenario(
     key="G",
     title="Customer says they were debited, and quotes a reference",
-    order_id="order_D4nishchay04",          # same order as D, with the email
+    # Its own order. G is D's situation plus the customer's email, but a
+    # merchant dashboard lists one row per order - sharing D's id showed
+    # the same order twice with two different verdicts.
+    order_id="order_G7nishchay07",
     start=FRIDAY_EVENING,
     evaluate_at=int(datetime(2026, 1, 28, 10, 0, 0, tzinfo=IST).timestamp()),
     ground_truth=Verdict.DUPLICATE_RISK,
@@ -474,7 +490,10 @@ SCENARIO_G = Scenario(
         "auto-refund without changing payment status, so the API alone "
         "cannot settle this. The customer's own reference can."
     ),
-    deliveries=list(SCENARIO_D.deliveries),
+    deliveries=[
+        Delivery(at=d.at, event_id=f"{d.event_id}_G", body=_rekey(d.body, "order_G7nishchay07"))
+        for d in SCENARIO_D.deliveries
+    ],
     customer_messages=[CUSTOMER_EMAIL],
 )
 

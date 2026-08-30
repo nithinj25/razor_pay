@@ -292,7 +292,12 @@ class Resolver:
                 output={"fetchers": chosen, "confidence": plan.confidence},
             )
             return {
-                "fetch_ctx": {"chosen": chosen},
+                # Merge, never replace. `fetch_ctx` also carries the HTTP
+                # client and the fetch inputs set at resolve() time -
+                # overwriting it here silently stripped both, so every
+                # client-backed probe reported "no API client" and every
+                # customer message vanished before the fetcher saw it.
+                "fetch_ctx": {**state.get("fetch_ctx", {}), "chosen": chosen},
                 "plan_reasoning": plan.reasoning,
                 "llm_calls": state.get("llm_calls", 0) + 1,
                 "steps": (step,),
@@ -305,7 +310,7 @@ class Resolver:
                 output={"fetchers": fallback}, error=str(e),
             )
             return {
-                "fetch_ctx": {"chosen": fallback},
+                "fetch_ctx": {**state.get("fetch_ctx", {}), "chosen": fallback},
                 "plan_reasoning": f"deterministic plan (LLM unavailable: {e})",
                 "degraded": state.get("degraded", []) + [f"plan: {e}"],
                 "steps": (step,),

@@ -507,3 +507,178 @@ async def delivery() -> JSONResponse:
     from services.ingress import whatsapp_hook
 
     return JSONResponse(whatsapp_hook.summary())
+
+
+# ---------------------------------------------------------------------
+# Merchant dashboard
+#
+# The console's other screens are built for a reviewer auditing the
+# system. These two are built for a merchant asking a narrower question:
+# what happened to *my* order, and what did the agent do about it.
+#
+# Data comes from persisted decisions when the worker has been running.
+# When it has not - a fresh clone, or a demo before any live traffic -
+# the labelled scenarios are resolved on the fly so the dashboard has
+# something real to show rather than an empty state. Which one you are
+# looking at is always stated, never implied.
+# ---------------------------------------------------------------------
+
+_ORDER_CACHE: dict[str, Any] = {}
+
+
+async def _decision_store():
+    from core.config import settings as _settings
+    from core.infra import Infra
+
+    store = globals().get("_ORDER_STORE")
+    if store is None:
+        from core.outcomes import build_outcome_store
+
+        infra = Infra(_settings())
+        await infra.start()
+        store = await build_outcome_store(_settings(), infra.pool)
+        globals()["_ORDER_STORE"] = store
+    return store
+
+
+async def _scenario_orders() -> list[dict]:
+    """Resolve the labelled scenarios so the dashboard is never empty.
+
+    Cached: each entry costs a pipeline run, and on the live path that
+    means real model calls.
+    """
+    from core.outcomes import decision_row
+
+    if _ORDER_CACHE.get("rows"):
+        return _ORDER_CACHE["rows"]
+
+    from harness.scripted_agents import scripted_fetchers, scripted_probes
+    from services.resolver.graph import Resolver
+    from services.strategist.graph import Strategist
+
+    rows = []
+    llm = build_llm()
+    for s in sc.ALL:
+        ex = Executor(dry_run=True)
+        # Serve the fixture's evidence through the real fetcher and probe
+        # interfaces rather than leaving the live probes unavailable. Left
+        # unserved they degrade confidence below the link floor, and
+        # scenario E - the strategist's showcase - reads as NOOP for a
+        # reason that has nothing to do with the decision.
+        p = Pipeline(
+            llm=llm, executor=ex,
+            resolver=Resolver(llm=llm, fetchers=scripted_fetchers(s)),
+            strategist=Strategist(llm=llm, probes=scripted_probes(s)),
+        )
+        d = await p.process(
+            s.observations(), s.evaluate_at, order_id=s.order_id,
+            extra={"customer_messages": list(s.customer_messages)}
+            if s.customer_messages else None,
+        )
+        row = decision_row(d)
+        row["scenario"] = s.key
+        row["title"] = s.title
+        rows.append(row)
+    _ORDER_CACHE["rows"] = rows
+    return rows
+
+
+@app.get("/api/orders")
+async def orders(limit: int = Query(50)) -> JSONResponse:
+    """Every order the agent has decided on, newest first."""
+    live: list[dict] = []
+    try:
+        store = await _decision_store()
+        live = await store.recent_orders(limit)
+    except Exception:                                # noqa: BLE001
+        live = []
+
+    source = "live"
+    if not live:
+        live = await _scenario_orders()
+        source = "scenarios"
+
+    return JSONResponse({
+        "source": source,
+        "count": len(live),
+        "orders": [
+            {
+                "order_id": r["order_id"],
+                "ts": r["ts"],
+                "verdict": r["verdict"],
+                "confidence": r["confidence"],
+                "action": r["action"],
+                "status": r["status"],
+                "detail": r.get("detail", ""),
+                "scenario": r.get("scenario"),
+                "title": r.get("title"),
+                "amount_due": (r.get("payload") or {}).get("amount_due", 0),
+                "amount_paid": (r.get("payload") or {}).get("amount_paid", 0),
+                "agents": (r.get("payload") or {}).get("agents", {}),
+                "gate_allowed": ((r.get("payload") or {}).get("gate") or {}).get("allowed"),
+            }
+            for r in live
+        ],
+    })
+
+
+@app.get("/api/orders/{order_id}")
+async def order_detail(order_id: str) -> JSONResponse:
+    """Everything the agent did on one order, in order.
+
+    A merchant reading this should be able to answer three questions
+    without asking anyone: what did it conclude, why, and what did it do
+    about it. So the payload carries the node-by-node trace, the gate's
+    independent re-derivation, and the observations the verdict was
+    folded from - not just the conclusion.
+    """
+    history: list[dict] = []
+    try:
+        store = await _decision_store()
+        history = await store.decisions_for(order_id)
+    except Exception:                                # noqa: BLE001
+        history = []
+
+    source = "live"
+    if not history:
+        rows = await _scenario_orders()
+        history = [r for r in rows if r["order_id"] == order_id]
+        source = "scenarios"
+
+    if not history:
+        return JSONResponse({"error": f"no decisions for {order_id}"}, status_code=404)
+
+    scenario = next((s for s in sc.ALL if s.order_id == order_id), None)
+    observations = []
+    if scenario:
+        for o in scenario.observations():
+            observations.append({
+                "event_type": o.event_type,
+                "payment_id": o.payment_id,
+                "event_time": o.event_time,
+                "received_at": o.received_at,
+                "skew": o.skew,
+                "status": o.status,
+                "method": o.method,
+                "error_source": o.error_source,
+                "error_reason": o.error_reason,
+                "rrn": o.rrn,
+                "amount": o.amount,
+            })
+
+    latest = history[-1]
+    return JSONResponse({
+        "source": source,
+        "order_id": order_id,
+        "scenario": scenario.key if scenario else None,
+        "title": scenario.title if scenario else None,
+        "note": scenario.note if scenario else "",
+        "observations": observations,
+        "history": [
+            {"ts": h["ts"], "verdict": h["verdict"], "confidence": h["confidence"],
+             "action": h["action"], "status": h["status"]}
+            for h in history
+        ],
+        "latest": latest.get("payload", {}),
+        "customer_messages": list(scenario.customer_messages) if scenario else [],
+    })

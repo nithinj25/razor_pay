@@ -13,6 +13,7 @@ you got is reported, never guessed at.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol
 
 CLICKHOUSE_DDL = [
@@ -102,6 +103,28 @@ COLUMNS = (
 
 VETO_COLUMNS = "ts trace_id order_id action rule reason confidence evidence".split()
 
+#: The full decision, trace included, keyed by order. A merchant asking
+#: "what did the agent do on my order?" needs the node-by-node record, not
+#: just the verdict - and the trace only exists in memory during the run,
+#: so it has to be written down or the dashboard can only ever show the
+#: conclusion.
+DECISION_COLUMNS = "ts order_id verdict confidence action status detail payload".split()
+
+DECISIONS_DDL_PG = """
+CREATE TABLE IF NOT EXISTS decisions (
+    id         BIGSERIAL PRIMARY KEY,
+    ts         TIMESTAMPTZ NOT NULL,
+    order_id   TEXT NOT NULL,
+    verdict    TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0,
+    action     TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT '',
+    detail     TEXT NOT NULL DEFAULT '',
+    payload    JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS decisions_order ON decisions (order_id, ts DESC);
+"""
+
 RECEIPT_COLUMNS = (
     "ts message_id recipient status error_code error_title conversation"
 ).split()
@@ -153,6 +176,9 @@ class OutcomeStore(Protocol):
     async def write_outcome(self, row: dict[str, Any]) -> None: ...
     async def write_vetoes(self, rows: list[dict[str, Any]]) -> None: ...
     async def write_receipt(self, row: dict[str, Any]) -> None: ...
+    async def write_decision(self, row: dict[str, Any]) -> None: ...
+    async def decisions_for(self, order_id: str) -> list[dict[str, Any]]: ...
+    async def recent_orders(self, limit: int = 50) -> list[dict[str, Any]]: ...
 
 
 class NullOutcomeStore:
@@ -164,6 +190,7 @@ class NullOutcomeStore:
         self.outcomes: list[dict] = []
         self.vetoes: list[dict] = []
         self.receipts: list[dict] = []
+        self.decisions: list[dict] = []
 
     async def init(self) -> None:
         return None
@@ -177,6 +204,21 @@ class NullOutcomeStore:
     async def write_receipt(self, row: dict[str, Any]) -> None:
         self.receipts.append(row)
 
+    async def write_decision(self, row: dict[str, Any]) -> None:
+        self.decisions.append(row)
+
+    async def decisions_for(self, order_id: str) -> list[dict[str, Any]]:
+        return [d for d in self.decisions if d.get("order_id") == order_id]
+
+    async def recent_orders(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Latest decision per order, newest first."""
+        latest: dict[str, dict] = {}
+        for d in self.decisions:
+            oid = d.get("order_id", "")
+            if oid not in latest or d.get("ts", 0) >= latest[oid].get("ts", 0):
+                latest[oid] = d
+        return sorted(latest.values(), key=lambda d: d.get("ts", 0), reverse=True)[:limit]
+
 
 class _NoReceipts:
     """Mixin: receipts are Postgres-only. A ClickHouse deployment still
@@ -184,6 +226,15 @@ class _NoReceipts:
 
     async def write_receipt(self, row: dict[str, Any]) -> None:
         return None
+
+    async def write_decision(self, row: dict[str, Any]) -> None:
+        return None
+
+    async def decisions_for(self, order_id: str) -> list[dict[str, Any]]:
+        return []
+
+    async def recent_orders(self, limit: int = 50) -> list[dict[str, Any]]:
+        return []
 
 
 class ClickHouseOutcomeStore(_NoReceipts):
@@ -222,6 +273,48 @@ class PostgresOutcomeStore:
             for ddl in POSTGRES_DDL:
                 await c.execute(ddl)
             await c.execute(RECEIPTS_DDL_PG)
+            await c.execute(DECISIONS_DDL_PG)
+
+    async def write_decision(self, row: dict[str, Any]) -> None:
+        from datetime import datetime, timezone
+
+        ph = ",".join(f"${i+1}" for i in range(len(DECISION_COLUMNS)))
+        vals = []
+        for c in DECISION_COLUMNS:
+            v = row.get(c)
+            if c == "ts":
+                v = datetime.fromtimestamp(v or 0, tz=timezone.utc)
+            elif c == "payload":
+                v = json.dumps(v or {})
+            vals.append(v)
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO decisions ({','.join(DECISION_COLUMNS)}) VALUES ({ph})",
+                *vals,
+            )
+
+    async def decisions_for(self, order_id: str) -> list[dict[str, Any]]:
+        async with self.pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT ts, order_id, verdict, confidence, action, status, detail, "
+                "payload FROM decisions WHERE order_id = $1 ORDER BY ts",
+                order_id,
+            )
+        return [_decision_dict(r) for r in rows]
+
+    async def recent_orders(self, limit: int = 50) -> list[dict[str, Any]]:
+        """One row per order - the most recent decision on each."""
+        async with self.pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT DISTINCT ON (order_id) ts, order_id, verdict, confidence, "
+                "action, status, detail, payload FROM decisions "
+                "ORDER BY order_id, ts DESC LIMIT $1",
+                limit,
+            )
+        return sorted(
+            (_decision_dict(r) for r in rows),
+            key=lambda d: d["ts"], reverse=True,
+        )
 
     async def write_receipt(self, row: dict[str, Any]) -> None:
         from datetime import datetime, timezone
@@ -329,3 +422,75 @@ async def build_outcome_store(cfg: Any, pool: Any = None) -> OutcomeStore:
             pass
 
     return NullOutcomeStore()
+
+
+def decision_payload(decision: Any) -> dict[str, Any]:
+    """Flatten a `Decision` into something a dashboard can render.
+
+    Deliberately self-contained: a merchant opening an order months later
+    should see what the agent saw, not a set of ids pointing at rows that
+    may since have changed.
+    """
+    v = decision.verdict
+    intent = decision.intent
+    gate = decision.gate
+    return {
+        "verdict": v.verdict.value,
+        "confidence": round(v.confidence, 3),
+        "rules_fired": list(v.rules_fired),
+        "amount_due": v.amount_due,
+        "amount_paid": v.amount_paid,
+        "triage": {"route": decision.route.value, "reason": decision.triage_reason},
+        "agents": decision.agents.to_row(),
+        "steps": [st.to_row() for st in decision.steps],
+        "evidence": [
+            {"source": e.source, "available": e.available,
+             "confidence": e.confidence, "provenance": e.provenance}
+            for e in decision.evidence
+        ],
+        "intent": None if intent is None else {
+            "action": intent.action.value,
+            "template_id": intent.template_id,
+            "channel": intent.channel.value if intent.channel else None,
+            "variables": list(intent.variables),
+            "confidence": round(intent.confidence, 3),
+            "reasoning": intent.reasoning,
+        },
+        "gate": None if gate is None else {
+            "allowed": gate.allowed,
+            "reason": gate.reason,
+            "rendered": gate.rendered,
+            "derived": gate.derived,
+            "vetoes": [{"rule": x.rule, "reason": x.reason} for x in gate.vetoes],
+        },
+        "outcome": None if decision.outcome is None else {
+            "status": decision.outcome.status,
+            "detail": decision.outcome.detail,
+            "action": decision.outcome.action.value,
+        },
+        "degraded": list(decision.degraded),
+        "latency_ms": int(decision.latency_s * 1000),
+    }
+
+
+def decision_row(decision: Any) -> dict[str, Any]:
+    out = decision.outcome
+    return {
+        "ts": decision.now,
+        "order_id": decision.order_id,
+        "verdict": decision.verdict.verdict.value,
+        "confidence": round(decision.verdict.confidence, 4),
+        "action": decision.action.value,
+        "status": out.status if out else "NONE",
+        "detail": out.detail if out else "",
+        "payload": decision_payload(decision),
+    }
+
+
+def _decision_dict(r: Any) -> dict[str, Any]:
+    d = dict(r)
+    ts = d.get("ts")
+    d["ts"] = int(ts.timestamp()) if hasattr(ts, "timestamp") else int(ts or 0)
+    payload = d.get("payload")
+    d["payload"] = json.loads(payload) if isinstance(payload, str) else (payload or {})
+    return d

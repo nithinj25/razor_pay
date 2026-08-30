@@ -1,7 +1,7 @@
 {
   "scenario": "G",
   "title": "Customer says they were debited, and quotes a reference",
-  "order_id": "order_D4nishchay04",
+  "order_id": "order_G7nishchay07",
   "start": 1769177400,
   "evaluate_at": 1769574600,
   "ground_truth": "DUPLICATE_RISK",
@@ -13,7 +13,7 @@
   "timeline": [
     {
       "at": 12,
-      "event_id": "evt_D_failed",
+      "event_id": "evt_D_failed_G",
       "event": "payment.failed",
       "event_time": 1769177404,
       "body": {
@@ -26,12 +26,12 @@
         "payload": {
           "payment": {
             "entity": {
-              "id": "pay_D1ambiguous",
+              "id": "pay_G1ambiguous",
               "entity": "payment",
               "amount": 234000,
               "currency": "INR",
               "status": "failed",
-              "order_id": "order_D4nishchay04",
+              "order_id": "order_G7nishchay07",
               "method": "netbanking",
               "captured": false,
               "amount_refunded": 0,

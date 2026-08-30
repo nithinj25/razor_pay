@@ -30,7 +30,7 @@ from core.config import Settings, settings
 from core.fold import FoldConfig
 from core.infra import Infra, use_psycopg_compatible_loop
 from core.llm import build_llm
-from core.outcomes import build_outcome_store, outcome_row
+from core.outcomes import build_outcome_store, decision_row, outcome_row
 from services.pipeline import Pipeline
 from services.scheduler.main import InMemoryScheduler, RedisScheduler
 from services.triage.classify import Route, triage
@@ -149,6 +149,9 @@ class Worker:
         self.processed += 1
 
         await self.outcomes.write_outcome(outcome_row(d))
+        # The trace only exists in memory during the run. A merchant asking
+        # "what did the agent do on my order?" needs it written down.
+        await self.outcomes.write_decision(decision_row(d))
         if self.pipeline.vetoes:
             await self.outcomes.write_vetoes(self.pipeline.vetoes)
             self.pipeline.vetoes = []
