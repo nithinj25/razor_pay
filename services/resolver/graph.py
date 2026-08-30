@@ -165,6 +165,7 @@ class Resolver:
         fold_cfg: FoldConfig | None = None,
         checkpointer: Any = None,
         fetchers: dict | None = None,
+        on_step=None,
     ):
         self.cfg = cfg or settings()
         self.llm = llm or NullLLM()
@@ -172,6 +173,8 @@ class Resolver:
             tat_banking_days=self.cfg.tat_window_banking_days,
             settle_horizon_days=self.cfg.settle_horizon_days,
         )
+        #: Optional async callback, invoked per step as the graph runs.
+        self.on_step = on_step
         self.fetchers = fetchers if fetchers is not None else FETCHERS
         # NEEDS_CLIENT describes the *real* HTTP fetchers. An injected
         # substitute borrowing one of their names does not inherit their
@@ -194,6 +197,26 @@ class Resolver:
         """
         name = getattr(self.llm, "last_provider", "") or self.cfg.provider
         return self.cfg.model_for(name) or name
+
+
+    def _wrap(self, fn):
+        """Emit each step the moment its node finishes.
+
+        The graph already records steps in state, but state is only
+        readable once the whole run completes - which is fine for an audit
+        row and useless for watching an agent think. Wrapping the node is
+        the least invasive place to hook: the nodes stay unaware, and a
+        caller that supplies no `on_step` pays nothing.
+        """
+        async def inner(state):
+            out = await fn(state)
+            if self.on_step:
+                for step in (out or {}).get("steps", ()):
+                    await self.on_step(step)
+            return out
+
+        inner.__name__ = getattr(fn, "__name__", "node")
+        return inner
 
     @staticmethod
     def _attempted(state: ResolveState) -> set[str]:
@@ -570,12 +593,12 @@ class Resolver:
         from langgraph.graph import END, StateGraph
 
         g = StateGraph(ResolveState)
-        g.add_node("precheck", self.precheck)
-        g.add_node("plan", self.plan)
-        g.add_node("fetch", self.fetch)
-        g.add_node("interpret", self.interpret)
-        g.add_node("analyze", self.analyze)
-        g.add_node("narrate", self.narrate)
+        g.add_node("precheck", self._wrap(self.precheck))
+        g.add_node("plan", self._wrap(self.plan))
+        g.add_node("fetch", self._wrap(self.fetch))
+        g.add_node("interpret", self._wrap(self.interpret))
+        g.add_node("analyze", self._wrap(self.analyze))
+        g.add_node("narrate", self._wrap(self.narrate))
 
         g.set_entry_point("precheck")
         g.add_conditional_edges("precheck", self.route_precheck, {"plan": "plan", "done": END})

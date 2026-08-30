@@ -133,3 +133,37 @@ def test_settled_order_shows_no_agent_steps(client):
     d = client.get("/api/orders/order_A1nishchay01").json()
     assert d["latest"]["agents"]["health"] == "rules-only"
     assert d["latest"]["agents"]["model_calls"] == 0
+
+
+# ------------------------------------------- live agent stream --
+
+def test_agent_stream_emits_steps_then_the_outcome(client):
+    """The demo view needs steps as they happen, not a finished table.
+
+    Scripted mode so this never touches a provider.
+    """
+    with client.stream("GET", "/api/agents/stream?scenario=G&mode=scripted") as r:
+        assert r.status_code == 200
+        body = "".join(r.iter_text())
+
+    events = [ln[7:] for ln in body.splitlines() if ln.startswith("event: ")]
+    assert events[0] == "start"
+    assert "step" in events, "no steps streamed"
+    assert events[-1] == "done"
+    # The order matters: a verdict must not precede the steps that produced it.
+    assert events.index("verdict") > events.index("step")
+
+
+def test_agent_stream_rejects_an_unknown_scenario(client):
+    with client.stream("GET", "/api/agents/stream?scenario=Z") as r:
+        body = "".join(r.iter_text())
+    assert "unknown scenario" in body
+
+
+def test_a_rules_only_case_still_streams_its_single_step(client):
+    """A finishes in one node. The stream must show that rather than
+    looking like it failed to start."""
+    with client.stream("GET", "/api/agents/stream?scenario=A&mode=scripted") as r:
+        body = "".join(r.iter_text())
+    assert body.count("event: step") == 1
+    assert "ORDER_SETTLED" in body

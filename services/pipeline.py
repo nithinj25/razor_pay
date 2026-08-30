@@ -91,13 +91,20 @@ class Pipeline:
         resolver: Resolver | None = None,
         strategist: Strategist | None = None,
         merchant: str = "Acme Store",
+        on_step=None,
     ):
         self.llm = llm or NullLLM()
         self.fold_cfg = fold_cfg or FoldConfig()
         self.resolver = resolver or Resolver(llm=self.llm, fold_cfg=self.fold_cfg)
+        # Late-bind so a caller can attach a listener to injected graphs too.
+        if on_step is not None:
+            self.resolver.on_step = on_step
         self.strategist = strategist or Strategist(llm=self.llm)
+        if on_step is not None:
+            self.strategist.on_step = on_step
         self.executor = executor or Executor(dry_run=True)
         self.scheduler = scheduler or InMemoryScheduler()
+        self.on_step = on_step
         self.merchant = merchant
         self.vetoes: list[dict] = []
         self.decisions: list[Decision] = []

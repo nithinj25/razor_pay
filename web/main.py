@@ -671,3 +671,105 @@ async def order_detail(order_id: str) -> JSONResponse:
         "latest": latest.get("payload", {}),
         "customer_messages": list(scenario.customer_messages) if scenario else [],
     })
+
+
+@app.get("/api/agents/stream")
+async def agents_stream(
+    scenario: str = Query("E"), mode: str = Query("auto")
+) -> StreamingResponse:
+    """Watch the agents think, step by step, as it happens.
+
+    `/api/agents` runs the whole pipeline and returns the finished trace.
+    That is right for an audit row and wrong for a demo: a reviewer needs
+    to see the reasoning arrive, one node at a time, with the pauses where
+    the model is actually thinking. This streams each step the moment its
+    node completes.
+    """
+    return StreamingResponse(
+        _agent_events(scenario.upper(), mode),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _agent_events(key: str, mode: str) -> AsyncIterator[str]:
+    from harness.scripted_agents import pipeline_for, scripted_llm
+
+    s = sc.BY_KEY.get(key)
+    if s is None:
+        yield _sse("error", {"message": f"unknown scenario {key}"})
+        return
+
+    llm = scripted_llm(s.key) if mode == "scripted" else build_llm()
+    ex = Executor(dry_run=True)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_step(step) -> None:
+        await queue.put(step.to_row())
+
+    pipeline = pipeline_for(s, llm, ex)
+    pipeline.resolver.on_step = on_step
+    pipeline.strategist.on_step = on_step
+
+    yield _sse("start", {
+        "scenario": s.key, "title": s.title, "note": s.note,
+        "order_id": s.order_id, "ground_truth": s.ground_truth.value,
+        "amount": sc.AMOUNT, "mode": mode,
+        "customer_messages": list(s.customer_messages),
+    })
+
+    task = asyncio.create_task(pipeline.process(
+        s.observations(), s.evaluate_at, order_id=s.order_id,
+        extra={"customer_messages": list(s.customer_messages)}
+        if s.customer_messages else None,
+    ))
+
+    # Drain steps as they land; stop when the pipeline finishes and the
+    # queue is empty. A step queued after the task completes still gets
+    # flushed, which matters for the off-graph voice brief.
+    while True:
+        try:
+            row = await asyncio.wait_for(queue.get(), timeout=0.25)
+            yield _sse("step", row)
+        except asyncio.TimeoutError:
+            if task.done() and queue.empty():
+                break
+
+    decision = await task
+    intent, gate, outcome = decision.intent, decision.gate, decision.outcome
+    yield _sse("verdict", {
+        "verdict": decision.verdict.verdict.value,
+        "confidence": round(decision.verdict.confidence, 3),
+        "ground_truth": s.ground_truth.value,
+        "correct": decision.verdict.verdict == s.ground_truth,
+        "rules_fired": list(decision.verdict.rules_fired),
+        "agents": decision.agents.to_row(),
+    })
+    if intent is not None:
+        yield _sse("intent", {
+            "action": intent.action.value,
+            "template_id": intent.template_id,
+            "channel": intent.channel.value if intent.channel else None,
+            "variables": list(intent.variables),
+            "confidence": round(intent.confidence, 3),
+            "reasoning": intent.reasoning,
+        })
+    if gate is not None:
+        yield _sse("gate", {
+            "allowed": gate.allowed, "reason": gate.reason,
+            "rendered": gate.rendered,
+            "vetoes": [{"rule": v.rule, "reason": v.reason} for v in gate.vetoes],
+            "derived": gate.derived,
+        })
+    if decision.voice_brief is not None:
+        b = decision.voice_brief
+        yield _sse("voice", {
+            "objective": b.objective, "questions": list(b.questions),
+            "reference_to_confirm": b.reference_to_confirm,
+            "do_not_say": list(b.do_not_say),
+        })
+    yield _sse("done", {
+        "status": outcome.status if outcome else "NONE",
+        "detail": outcome.detail if outcome else "",
+        "action": decision.action.value,
+    })

@@ -159,10 +159,12 @@ class Strategist:
         cfg: Settings | None = None,
         checkpointer: Any = None,
         probes: dict | None = None,
+        on_step=None,
     ):
         self.cfg = cfg or settings()
         self.llm = llm or NullLLM()
         self.usage = getattr(self.llm, "usage", Usage())
+        self.on_step = on_step
         self.probes = probes or {}
         self._source = "scripted" if type(self.llm).__name__ == "ScriptedLLM" else "model"
         #: Steps from calls made outside the graph, so the trace still sees them.
@@ -179,6 +181,26 @@ class Strategist:
         """
         name = getattr(self.llm, "last_provider", "") or self.cfg.provider
         return self.cfg.model_for(name) or name
+
+
+    def _wrap(self, fn):
+        """Emit each step the moment its node finishes.
+
+        The graph already records steps in state, but state is only
+        readable once the whole run completes - which is fine for an audit
+        row and useless for watching an agent think. Wrapping the node is
+        the least invasive place to hook: the nodes stay unaware, and a
+        caller that supplies no `on_step` pays nothing.
+        """
+        async def inner(state):
+            out = await fn(state)
+            if self.on_step:
+                for step in (out or {}).get("steps", ()):
+                    await self.on_step(step)
+            return out
+
+        inner.__name__ = getattr(fn, "__name__", "node")
+        return inner
 
     # ------------------------------ nodes ------------------------------
 
@@ -442,10 +464,10 @@ class Strategist:
         from langgraph.graph import END, StateGraph
 
         g = StateGraph(StrategyState)
-        g.add_node("assess", self.assess)
-        g.add_node("downtime", self.probe_downtime)
-        g.add_node("history", self.probe_history)
-        g.add_node("compose", self.compose)
+        g.add_node("assess", self._wrap(self.assess))
+        g.add_node("downtime", self._wrap(self.probe_downtime))
+        g.add_node("history", self._wrap(self.probe_history))
+        g.add_node("compose", self._wrap(self.compose))
 
         g.set_entry_point("assess")
         g.add_conditional_edges(

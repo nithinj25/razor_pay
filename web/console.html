@@ -163,6 +163,42 @@ pre{
 }
 .tl-row.inv::before{border-color:var(--warn)}
 
+
+/* Live agent thread - the demo screen. Each node arrives as its own
+   turn, so a viewer watches the reasoning build rather than reading a
+   finished table. */
+.thread{display:flex;flex-direction:column;gap:12px}
+.turn{
+  display:grid;grid-template-columns:108px 1fr;gap:16px;
+  padding:14px 16px;border-radius:8px;border:1px solid var(--line);
+  background:var(--card);animation:slidein .28s ease-out;
+}
+.turn.is-model{border-left:3px solid var(--ok)}
+.turn.is-rules{border-left:3px solid var(--ink-3)}
+.turn.is-fallback{border-left:3px solid var(--warn);background:var(--warn-sf)}
+.turn.is-scripted{border-left:3px solid var(--rzp-blue)}
+@keyframes slidein{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.turn .who{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.turn .who b{display:block;font-size:12.5px;color:var(--ink);text-transform:none;letter-spacing:0;margin-top:3px}
+.turn .who i{display:block;font-style:normal;font-size:11.5px;text-transform:none;letter-spacing:0;margin-top:1px}
+.turn .say{font-size:14.5px;line-height:1.6}
+.turn .met{margin-top:6px;font-size:11.5px;color:var(--ink-3);display:flex;gap:14px;flex-wrap:wrap}
+.turn .out{margin-top:8px;font-size:12px;color:var(--ink-2);background:var(--sunk);
+  border-radius:6px;padding:8px 10px;overflow-x:auto;white-space:pre-wrap;
+  font-family:"IBM Plex Mono",monospace}
+.thinking{display:flex;align-items:center;gap:9px;color:var(--ink-3);font-size:13px;padding:10px 16px}
+.thinking i{width:7px;height:7px;border-radius:50%;background:var(--rzp-blue);animation:pulse 1.1s infinite}
+.thinking i:nth-child(2){animation-delay:.18s}
+.thinking i:nth-child(3){animation-delay:.36s}
+@keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
+.finalcard{border:1px solid var(--line);border-left:3px solid var(--rzp-blue);
+  border-radius:8px;background:var(--card);padding:16px 18px}
+.msgbubble{background:#DCF8C6;color:#111;border-radius:10px;padding:11px 13px;
+  max-width:540px;font-size:14px;line-height:1.5;box-shadow:0 1px 1px rgba(0,0,0,.12)}
+:root[data-theme="dark"] .msgbubble{background:#1F3D2B;color:#E6ECF7}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .msgbubble{background:#1F3D2B;color:#E6ECF7}
+}
 .empty{padding:44px 18px;text-align:center;color:var(--ink-3)}
 [x-cloak]{display:none!important}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -553,6 +589,134 @@ pre{
         </div>
       </div>
 
+
+      <!-- ══════════ AGENTS IN ACTION ══════════ -->
+      <div x-show="tab==='live'">
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-h">
+            <select x-model="scenario" @change="resetLive()">
+              <template x-for="s in scenarios" :key="s.key">
+                <option :value="s.key" x-text="s.key+' — '+s.title"></option>
+              </template>
+            </select>
+            <button class="btn ghost" :aria-pressed="agentMode==='auto'"
+                    @click="agentMode='auto'">Live model</button>
+            <button class="btn ghost" :aria-pressed="agentMode==='scripted'"
+                    @click="agentMode='scripted'">Scripted</button>
+            <button class="btn" @click="liveRunning?stopLive():startLive()"
+                    x-text="liveRunning?'Stop':'Watch the agents'"></button>
+          </div>
+          <div class="card-b"><p class="muted" style="margin:0" x-text="liveMeta.note||''"></p></div>
+        </div>
+
+        <template x-if="(liveMeta.customer_messages||[]).length">
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-h"><h3>What the customer wrote</h3>
+              <span class="muted">the input no rule can read</span></div>
+            <div class="card-b">
+              <template x-for="(m,i) in liveMeta.customer_messages" :key="i">
+                <pre x-text="m"></pre>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <div class="thread">
+          <template x-for="(t,i) in turns" :key="i">
+            <div class="turn" :class="'is-'+t.source">
+              <div class="who">
+                <span x-text="t.source"></span>
+                <b x-text="t.agent"></b>
+                <i x-text="t.node"></i>
+              </div>
+              <div>
+                <div class="say" x-text="t.summary"></div>
+                <div class="met">
+                  <span x-text="t.latency_ms+' ms'"></span>
+                  <template x-if="t.tokens"><span x-text="t.tokens+' tokens'"></span></template>
+                  <template x-if="t.model && t.source==='model'"><span x-text="t.model"></span></template>
+                </div>
+                <template x-if="t.out"><div class="out" x-text="t.out"></div></template>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="liveRunning">
+            <div class="thinking"><i></i><i></i><i></i>
+              <span x-text="turns.length ? 'thinking…' : 'starting the resolver…'"></span></div>
+          </template>
+
+          <template x-if="!turns.length && !liveRunning">
+            <div class="card"><div class="empty">
+              Pick a case and press <b>Watch the agents</b>.<br>
+              A, C and F finish in one step — that is the design, not a failure.
+            </div></div>
+          </template>
+        </div>
+
+        <template x-if="liveVerdict.verdict">
+          <div class="finalcard" style="margin-top:16px">
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+              <span class="pill" :class="vClass(liveVerdict.verdict)" x-text="liveVerdict.verdict"></span>
+              <span class="mono" x-text="liveVerdict.confidence"></span>
+              <span class="pill" :class="liveVerdict.correct?'ok':'bad'"
+                    x-text="liveVerdict.correct?'matches ground truth':'MISMATCH vs '+liveVerdict.ground_truth"></span>
+              <span class="muted" x-text="(liveVerdict.rules_fired||[]).join(', ')"></span>
+            </div>
+
+            <template x-if="liveIntent.action">
+              <div style="margin-bottom:14px">
+                <div class="muted" style="margin-bottom:4px">Proposed</div>
+                <div><b x-text="liveIntent.action"></b>
+                  <span class="muted" x-show="liveIntent.template_id"
+                        x-text="' · '+liveIntent.template_id+' over '+liveIntent.channel"></span></div>
+                <div class="muted" style="margin-top:4px" x-text="liveIntent.reasoning"></div>
+              </div>
+            </template>
+
+            <template x-if="liveGate.reason">
+              <div style="margin-bottom:14px">
+                <div class="muted" style="margin-bottom:6px">Gate — re-derived independently</div>
+                <span class="pill" :class="liveGate.allowed?'ok':'bad'"
+                      x-text="liveGate.allowed?'Allowed':'Vetoed'"></span>
+                <template x-for="(v,i) in (liveGate.vetoes||[])" :key="i">
+                  <div style="margin-top:6px"><span class="pill bad" x-text="v.rule"></span>
+                    <span class="muted" x-text="' '+v.reason"></span></div>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="liveGate.rendered">
+              <div style="margin-bottom:14px">
+                <div class="muted" style="margin-bottom:6px">Message the customer receives</div>
+                <div class="msgbubble" x-text="liveGate.rendered"></div>
+              </div>
+            </template>
+
+            <template x-if="liveVoice.objective">
+              <div style="margin-bottom:14px">
+                <div class="muted" style="margin-bottom:6px">Call brief — what to ask</div>
+                <div style="margin-bottom:6px" x-text="liveVoice.objective"></div>
+                <template x-for="(q,i) in liveVoice.questions" :key="i">
+                  <div style="font-size:13.5px" x-text="(i+1)+'. '+q"></div>
+                </template>
+                <div class="muted" style="margin-top:8px"
+                     x-text="'Must not say: '+(liveVoice.do_not_say||[]).join(' · ')"></div>
+              </div>
+            </template>
+
+            <template x-if="liveDone.status">
+              <div>
+                <div class="muted" style="margin-bottom:4px">Outcome</div>
+                <span class="pill" :class="liveDone.status==='FAILED'?'bad':'ok'"
+                      x-text="liveDone.action+' · '+liveDone.status"></span>
+                <div class="muted" style="margin-top:4px" x-text="liveDone.detail"></div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
       <!-- ══════════ EXCEPTIONS ══════════ -->
       <div x-show="tab==='exceptions'">
         <template x-for="(c,i) in (exceptions.cards||[])" :key="i">
@@ -765,6 +929,7 @@ function app(){
     tabs:[
       {id:'orders',     label:'Orders'},
       {id:'console',    label:'Live console'},
+      {id:'live',       label:'Agents in action'},
       {id:'exceptions', label:'Exception queue'},
       {id:'metrics',    label:'Metrics'},
       {id:'agents',     label:'Agents'},
@@ -775,6 +940,8 @@ function app(){
     decision:{fold:[],rules_fired:[]}, tally:{baseline:0,nishchay:0},
     orders:[], ordersSource:'', detail:{}, exceptions:{}, metrics:{}, delivery:{},
     agents:{}, agentMode:'auto', agentsLoading:false,
+    turns:[], liveRunning:false, liveMeta:{}, liveVerdict:{}, liveIntent:{},
+    liveGate:{}, liveVoice:{}, liveDone:{}, liveES:null,
     llm:{configured:false,message:''}, vetoFilter:'', copied:'', note:'', es:null,
 
     async init(){
@@ -785,13 +952,15 @@ function app(){
       await this.loadOrders();
     },
     title(){
-      return {orders:'Orders', order:'Order detail', console:'Live recovery console',
+      return {orders:'Orders', order:'Order detail', live:'Agents in action',
+              console:'Live recovery console',
               exceptions:'Exception queue', metrics:'Metrics', agents:'Agents'}[this.tab]||'';
     },
     subtitle(){
       if(this.tab==='orders') return this.ordersSource==='live'
         ? 'From the event store' : 'Labelled scenarios — no live traffic yet';
       if(this.tab==='order')  return this.detail.order_id||'';
+      if(this.tab==='live')   return 'Each step appears as the agents produce it';
       if(this.tab==='agents') return 'Node by node, and whether a model was involved';
       return '';
     },
@@ -834,6 +1003,38 @@ function app(){
       const t=this.latest().triage; if(!t) return '';
       return 'Triage: '+t.route+' — '+t.reason;
     },
+
+    resetLive(){
+      this.stopLive();
+      this.turns=[]; this.liveVerdict={}; this.liveIntent={};
+      this.liveGate={}; this.liveVoice={}; this.liveDone={}; this.liveMeta={};
+    },
+    startLive(){
+      this.resetLive(); this.liveRunning=true;
+      this.liveES=new EventSource(
+        '/api/agents/stream?scenario='+this.scenario+'&mode='+this.agentMode);
+      this.liveES.addEventListener('start',e=>{ this.liveMeta=JSON.parse(e.data); });
+      this.liveES.addEventListener('step',e=>{
+        const st=JSON.parse(e.data), o=st.output||{};
+        // Show structured output only where a viewer can read something
+        // from it - a probe result or an extraction, never a dump.
+        let out='';
+        if(st.node==='interpret') out=JSON.stringify(o,null,1);
+        else if(o.fetchers) out='probing: '+o.fetchers.join(', ');
+        else if(st.node==='fetch' && (o.available||[]).length) out='returned: '+o.available.join(', ');
+        else if(o.template_id) out=o.template_id+(o.rendered?' → '+o.rendered:'');
+        else if(o.next_probe) out='next: '+o.next_probe;
+        else if(o.questions) out=o.questions.join('\n');
+        this.turns.push(Object.assign({},st,{out:out}));
+      });
+      this.liveES.addEventListener('verdict',e=>{ this.liveVerdict=JSON.parse(e.data); });
+      this.liveES.addEventListener('intent', e=>{ this.liveIntent=JSON.parse(e.data); });
+      this.liveES.addEventListener('gate',   e=>{ this.liveGate=JSON.parse(e.data); });
+      this.liveES.addEventListener('voice',  e=>{ this.liveVoice=JSON.parse(e.data); });
+      this.liveES.addEventListener('done',   e=>{ this.liveDone=JSON.parse(e.data); this.stopLive(); });
+      this.liveES.onerror=()=>this.stopLive();
+    },
+    stopLive(){ if(this.liveES){this.liveES.close();this.liveES=null;} this.liveRunning=false; },
 
     reset(){
       this.stop(); this.events=[]; this.finished=false;
