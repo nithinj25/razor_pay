@@ -33,3 +33,5 @@ Thumbs.db
 # Downloaded tunnel binary, not source
 tools/
 checkout.html
+
+checkout_*.html
