@@ -172,3 +172,32 @@ def scripted_probes(scenario) -> dict:
         return probe
 
     return {name: make(name) for name in by_source}
+
+
+def pipeline_for(scenario, llm=None, executor=None, **kw):
+    """A pipeline wired to serve this scenario's evidence.
+
+    Three call sites used to build this themselves - the replay CLI, the
+    accuracy run, and the dashboard - and they wired it three different
+    ways. The CLI left the live probes unconfigured, so their evidence
+    came back unavailable, confidence degraded below the gate's floor,
+    and scenario E read as a veto for a reason that had nothing to do
+    with the decision. Same scenario, three different answers depending
+    on which entry point you used.
+
+    The fixture's evidence travels the real fetcher and probe interfaces
+    here, so the graph is exercised exactly as it would be against the
+    live API - the data is fixed, the code path is not.
+    """
+    from services.executor.main import Executor
+    from services.pipeline import Pipeline
+    from services.resolver.graph import Resolver
+    from services.strategist.graph import Strategist
+
+    return Pipeline(
+        llm=llm,
+        executor=executor or Executor(dry_run=True),
+        resolver=Resolver(llm=llm, fetchers=scripted_fetchers(scenario)),
+        strategist=Strategist(llm=llm, probes=scripted_probes(scenario)),
+        **kw,
+    )

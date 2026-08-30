@@ -24,7 +24,6 @@ from harness import baseline as bl
 from harness import scenarios as sc
 from harness.replay import Replay
 from services.executor.main import Executor
-from services.pipeline import Pipeline
 
 ARTIFACTS = Path(".artifacts")
 
@@ -62,20 +61,11 @@ async def run_nishchay(real_llm: bool = False) -> Run:
     run = Run()
     llm = build_llm() if real_llm else None
 
+    from harness.scripted_agents import pipeline_for
+
     for s in sc.ALL:
         ex = Executor(dry_run=True)
-        resolver = strategist = None
-        if real_llm:
-            # Serve the fixture's evidence through the real fetcher and
-            # probe interfaces, so the agents gather rather than being
-            # handed everything up front.
-            from harness.scripted_agents import scripted_fetchers, scripted_probes
-            from services.resolver.graph import Resolver
-            from services.strategist.graph import Strategist
-
-            resolver = Resolver(llm=llm, fetchers=scripted_fetchers(s))
-            strategist = Strategist(llm=llm, probes=scripted_probes(s))
-        p = Pipeline(llm=llm, executor=ex, resolver=resolver, strategist=strategist)
+        p = pipeline_for(s, llm, ex)
         r = Replay(p)
         await r.run(s)
 

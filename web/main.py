@@ -552,24 +552,13 @@ async def _scenario_orders() -> list[dict]:
     if _ORDER_CACHE.get("rows"):
         return _ORDER_CACHE["rows"]
 
-    from harness.scripted_agents import scripted_fetchers, scripted_probes
-    from services.resolver.graph import Resolver
-    from services.strategist.graph import Strategist
+    from harness.scripted_agents import pipeline_for
 
     rows = []
     llm = build_llm()
     for s in sc.ALL:
         ex = Executor(dry_run=True)
-        # Serve the fixture's evidence through the real fetcher and probe
-        # interfaces rather than leaving the live probes unavailable. Left
-        # unserved they degrade confidence below the link floor, and
-        # scenario E - the strategist's showcase - reads as NOOP for a
-        # reason that has nothing to do with the decision.
-        p = Pipeline(
-            llm=llm, executor=ex,
-            resolver=Resolver(llm=llm, fetchers=scripted_fetchers(s)),
-            strategist=Strategist(llm=llm, probes=scripted_probes(s)),
-        )
+        p = pipeline_for(s, llm, ex)
         d = await p.process(
             s.observations(), s.evaluate_at, order_id=s.order_id,
             extra={"customer_messages": list(s.customer_messages)}

@@ -214,10 +214,12 @@ async def main_async(args) -> None:
             await post_live(s, args.url, cfg.rzp_webhook_secret, args.speed)
         return
 
+    from harness.scripted_agents import pipeline_for
+
     llm = build_llm() if args.real_llm else None
     for key in _keys(args.scenario):
         s = sc.BY_KEY[key]
-        r = Replay(Pipeline(llm=llm), speed=args.speed)
+        r = Replay(pipeline_for(s, llm), speed=args.speed)
         await r.run(s, realtime=args.realtime)
         f, eff = r.final, r.effective
         ok = f.verdict.verdict == s.ground_truth
