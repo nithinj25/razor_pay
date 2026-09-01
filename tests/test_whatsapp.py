@@ -121,7 +121,7 @@ async def test_executor_sends_over_whatsapp_when_configured():
     s = sc.SCENARIO_E
     graph = FakeGraph(200, {"messages": [{"id": "wamid.X"}]})
     sender = WhatsAppSender(configured(demo_whatsapp_to="919000000000"), client=graph)
-    ex = Executor(dry_run=True, whatsapp=sender)
+    ex = Executor(dry_run=False, whatsapp=sender)
 
     d = evaluate(_intent(), s.observations(), s.evaluate_at, evidence=s.evidence)
     assert d.allowed, d.reason
@@ -143,7 +143,7 @@ async def test_executor_stubs_whatsapp_when_not_configured():
     from services.gate.rules import evaluate
 
     s = sc.SCENARIO_E
-    ex = Executor(dry_run=True, whatsapp=WhatsAppSender(cfg()))
+    ex = Executor(dry_run=False, whatsapp=WhatsAppSender(cfg()))
     d = evaluate(_intent(), s.observations(), s.evaluate_at, evidence=s.evidence)
     out = await ex.execute(d, _intent(), s.order_id, "pay_E1downtime", 234000)
 
@@ -156,7 +156,7 @@ async def test_send_failure_is_recorded_not_raised():
 
     s = sc.SCENARIO_E
     graph = FakeGraph(400, {"error": {"code": WINDOW_CLOSED, "message": "x"}})
-    ex = Executor(dry_run=True, whatsapp=WhatsAppSender(configured(), client=graph))
+    ex = Executor(dry_run=False, whatsapp=WhatsAppSender(configured(), client=graph))
     d = evaluate(_intent(), s.observations(), s.evaluate_at, evidence=s.evidence)
 
     out = await ex.execute(d, _intent(), s.order_id, "pay_E1downtime", 234000)
@@ -170,7 +170,7 @@ async def test_vetoed_intent_never_reaches_whatsapp():
 
     s = sc.SCENARIO_F                      # settled order - I3 vetoes
     graph = FakeGraph(200, {"messages": [{"id": "m"}]})
-    ex = Executor(dry_run=True, whatsapp=WhatsAppSender(configured(), client=graph))
+    ex = Executor(dry_run=False, whatsapp=WhatsAppSender(configured(), client=graph))
 
     d = evaluate(_intent(), s.observations(), s.evaluate_at)
     assert not d.allowed
@@ -211,7 +211,7 @@ async def test_wait_template_gets_no_payment_link():
     s = sc.SCENARIO_E
     graph = FakeGraph(200, {"messages": [{"id": "m"}]})
     sender = WhatsAppSender(configured(demo_whatsapp_to="919000000000"), client=graph)
-    ex = Executor(dry_run=True, whatsapp=sender)
+    ex = Executor(dry_run=False, whatsapp=sender)
 
     wait = RecoveryIntent(
         action=Action.SEND_RECOVERY_LINK, template_id="RCV_DOWNTIME_WAIT",
@@ -242,7 +242,7 @@ async def test_registered_template_is_preferred_over_freeform():
     s = sc.SCENARIO_E
     graph = FakeGraph(200, {"messages": [{"id": "wamid.T"}]})
     sender = WhatsAppSender(configured(demo_whatsapp_to="919000000000"), client=graph)
-    ex = Executor(dry_run=True, whatsapp=sender)
+    ex = Executor(dry_run=False, whatsapp=sender)
 
     d = evaluate(_intent(), s.observations(), s.evaluate_at, evidence=s.evidence)
     out = await ex.execute(d, _intent(), s.order_id, "pay_E1downtime", 234000)

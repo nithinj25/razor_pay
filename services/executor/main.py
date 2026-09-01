@@ -326,6 +326,19 @@ class Executor:
                     detail="WhatsApp not configured; link payload built, not dispatched",
                     request=payload,
                 )
+            # A dry run must not reach a real customer. `_link_url` already
+            # honours this, but the send did not, so every accuracy and
+            # chaos run was dispatching real WhatsApp messages to whatever
+            # number was configured - silently, because the outcome only
+            # said EXECUTED. It became visible when the channel policy made
+            # WhatsApp the default rail rather than an occasional pick.
+            if self.dry_run:
+                return Outcome(
+                    **base, action=Action.SEND_RECOVERY_LINK, status="STUBBED",
+                    detail=f"dry run: would send {intent.template_id} over WhatsApp "
+                           f"to {self.whatsapp.recipient_for(contact) or '(no recipient)'}",
+                    request=payload,
+                )
             # RCV_DOWNTIME_WAIT deliberately has no link variable - it
             # tells the customer they were NOT charged and to wait. Bolting
             # a pay-now link onto that contradicts the message, so only

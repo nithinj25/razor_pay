@@ -27,8 +27,15 @@ use_psycopg_compatible_loop()
 # Every provider key, not just the ones that existed when this was
 # written - a new provider added to .env would otherwise silently put the
 # suite back on the network.
+#
+# RZP_KEY_SECRET is on the list for the same reason, one step further
+# out: with a secret present, any test running the executor outside dry
+# run would create real payment links on the merchant account. No test
+# does that today, which is exactly why it needs to be impossible rather
+# than merely avoided.
 for _key in ("ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "GEMINI_API_KEY",
-             "WHATSAPP_ACCESS_TOKEN", "DEMO_WHATSAPP_TO"):
+             "WHATSAPP_ACCESS_TOKEN", "DEMO_WHATSAPP_TO",
+             "RZP_KEY_SECRET"):
     os.environ[_key] = ""
 os.environ["LLM_PROVIDER"] = "auto"
 
