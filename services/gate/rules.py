@@ -74,6 +74,15 @@ class CustomerContext:
     timezone: str = "IST"
     engagement_channel: Channel | None = None
 
+    #: Destinations we actually hold, straight off the payment entity, plus
+    #: whether a WhatsApp sender is wired up. The gate derives reachability
+    #: from these rather than trusting the channel the model chose.
+    #: `None` means "no reachability information" and is permissive, so a
+    #: caller that does not populate it keeps the old behaviour.
+    contact: str | None = None
+    email: str | None = None
+    whatsapp_ready: bool = False
+
 
 @dataclass
 class GateDecision:
@@ -107,6 +116,49 @@ def evidence_version(obs: list[Observation]) -> str:
     for o in sorted(obs, key=lambda o: (o.event_time, o.event_id)):
         h.update(f"{o.event_id}:{o.event_type}:{o.event_time}".encode())
     return h.hexdigest()[:16]
+
+
+def _recovery_source(observations: list[Observation]) -> str:
+    """The original order, if this payment was made on a link we sent.
+
+    The executor stamps `source_order` into the recovery link's notes and
+    Razorpay carries those onto the payment entity, so this is re-derived
+    from the webhook itself rather than from anything the process
+    remembers - it survives a worker restart, which an in-memory set of
+    "orders we created" would not.
+    """
+    for o in sorted(observations, key=lambda x: x.event_time, reverse=True):
+        ent = (o.payload.get("payload", {}).get("payment", {}) or {}).get("entity", {}) or {}
+        src = (ent.get("notes") or {}).get("source_order")
+        if src:
+            return str(src)
+    return ""
+
+
+def _reachable(channel: Channel, customer: CustomerContext) -> bool:
+    """Can anything actually be delivered over this channel, for them?
+
+    Deliberately not a capability check on the provider alone: a WhatsApp
+    sender with no recipient and an SMS route with no phone number are
+    both "configured" and both reach nobody.
+
+    A customer with no reachability information at all is treated as
+    reachable. Blocking on absent data would invert I5 here - degradation
+    biases toward inaction, but that is inaction on *money*, and refusing
+    to message a customer we simply have not looked up yet is a different
+    thing from refusing to move funds we cannot account for.
+    """
+    if customer.contact is None and customer.email is None:
+        return True
+    if channel == Channel.WHATSAPP:
+        # The sender falls back to a configured demo recipient, which is
+        # a destination even when the order carries no contact.
+        return bool(customer.contact) or customer.whatsapp_ready
+    if channel in (Channel.SMS, Channel.VOICE):
+        return bool(customer.contact)
+    if channel == Channel.EMAIL:
+        return bool(customer.email)
+    return True
 
 
 def evaluate(
@@ -281,6 +333,37 @@ def evaluate(
         for v in intent.variables:
             if len(v) > MAX_VARIABLE_LEN:
                 vetoes.append(Veto("DLT", f"variable {v[:12]!r} exceeds {MAX_VARIABLE_LEN} chars"))
+
+        # A recovery link is a NEW order (I3). If the payment that just
+        # failed was itself made on a link we sent, another link makes a
+        # third order for one debt - the exact multiplication this project
+        # exists to prevent, performed by the agent itself. Found live:
+        # one failed checkout produced a recovery order, whose own failure
+        # produced another, unbounded.
+        #
+        # The chain stops at one. A customer who could not pay the
+        # recovery link does not need a second link; they need a human,
+        # and NOOP here puts the order in front of one.
+        source = _recovery_source(observations)
+        if source:
+            vetoes.append(
+                Veto("RECOVERY_CHAIN",
+                     f"payment is already on a recovery link for {source}; "
+                     "a second link would be a third order for one debt")
+            )
+
+        # A channel with no destination is not a plan. The model picks a
+        # channel from a menu of three; whether anything can actually be
+        # delivered over it is a fact about this order, so the gate derives
+        # it rather than believing the choice. Found live: the strategist
+        # chose SMS for an order carrying no contact, the executor built a
+        # correct payload, and the message reached nobody while the run
+        # still reported EXECUTED.
+        if intent.channel and not _reachable(intent.channel, customer):
+            vetoes.append(
+                Veto("UNREACHABLE",
+                     f"no destination for {intent.channel.value}")
+            )
 
         if intent.channel and intent.channel in customer.opted_out_channels:
             vetoes.append(Veto("OPT_OUT", f"opted out of {intent.channel.value}"))

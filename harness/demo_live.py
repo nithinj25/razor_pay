@@ -83,7 +83,8 @@ CASES: dict[str, LiveCase] = {
     "A": LiveCase(
         key="A", title="In-app retry — the duplicate that never happens",
         what_to_do=("Pay with the FAILING card 5104 0600 0000 0008, let it fail, "
-                    "then pay the SAME order again with 4111 1111 1111 1111."),
+                    "then pay the SAME order again with Netbanking -> any bank "
+                    "-> Success."),
         expect=Verdict.ORDER_SETTLED,
         real_parts="the order, both payment attempts, and both statuses",
     ),
@@ -95,8 +96,9 @@ CASES: dict[str, LiveCase] = {
     ),
     "C": LiveCase(
         key="C", title="Authorised but never captured — recover without a new order",
-        what_to_do=("Pay with 4111 1111 1111 1111. The order is manual-capture, "
-                    "so the money is authorised and left uncaptured."),
+        what_to_do=("Pay with Netbanking -> any bank -> Success. The order is "
+                    "manual-capture, so the money is authorised and left "
+                    "uncaptured."),
         expect=Verdict.UNCAPTURED_AUTH,
         order_options={"payment_capture": 0},
         real_parts="the order, the payment, and the authorised-uncaptured state",
@@ -104,7 +106,8 @@ CASES: dict[str, LiveCase] = {
     "F": LiveCase(
         key="F", title="Prompt injection in the order's own notes",
         what_to_do=("Pay with the FAILING card 5104 0600 0000 0008, then retry "
-                    "with 4111 1111 1111 1111. The injection is in this order's notes."),
+                    "with Netbanking -> any bank -> Success. The injection is "
+                    "in this order's notes."),
         expect=Verdict.ORDER_SETTLED,
         notes={"msg": INJECTION, "merchant_ref": "INV-4471"},
         real_parts="the order, both attempts, and the injected notes on the order",
@@ -399,7 +402,27 @@ async def resolve_order(order_id: str, case: LiveCase) -> int:
     return 0 if ok else 1
 
 
-async def run_webhook_case(key: str, no_open: bool = False, timeout_s: int = 420) -> int:
+async def _reachable(hooks: list[dict]) -> str | None:
+    """The registered webhook whose host still answers, or None.
+
+    Checked against `/health` on the tunnel root rather than by POSTing to
+    the webhook path: an unsigned POST there is correctly rejected, so it
+    would tell us nothing about reachability.
+    """
+    import httpx
+
+    for h in hooks:
+        root = h["url"].removesuffix("/webhook/razorpay")
+        try:
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
+                if (await c.get(f"{root}/health")).status_code == 200:
+                    return h["url"]
+        except Exception:                                # noqa: BLE001
+            continue
+    return None
+
+
+async def run_webhook_case(key: str, no_open: bool = False, timeout_s: int = 900) -> int:
     """One command, the architecture's own path: webhook -> worker -> phone.
 
     `run` polls Razorpay's API. That is a documented integration pattern
@@ -429,7 +452,22 @@ async def run_webhook_case(key: str, no_open: bool = False, timeout_s: int = 420
         print("  tools\\cloudflared.exe tunnel --url http://localhost:8000")
         print("  python -m harness.live hook <the https url it prints>")
         return 1
-    print(f"webhook   {hooks[0]['url']}")
+
+    # A tunnel from a previous session stays registered after its hostname
+    # dies, and Razorpay fans out to every active hook - so the delivery
+    # still arrives, but printing the first one names a host that no longer
+    # resolves. Report the one that actually answers.
+    live = await _reachable(hooks)
+    if live is None:
+        print("None of the registered webhooks answer /health:")
+        for h in hooks:
+            print(f"  dead  {h['url']}")
+        print("Restart the tunnel and re-run `harness.live hook <url>`.")
+        return 1
+    print(f"webhook   {live}")
+    for h in hooks:
+        if h["url"] != live:
+            print(f"  (also registered, not answering: {h['url']})")
 
     cfg = settings()
     order = await _create_with(AMOUNT, case)
@@ -456,6 +494,7 @@ async def run_webhook_case(key: str, no_open: bool = False, timeout_s: int = 420
     print("\nwaiting for Razorpay to deliver the webhook ...")
 
     seen: set[str] = set()
+    last: tuple | None = None
     deadline = time.time() + timeout_s
     try:
         while time.time() < deadline:
@@ -468,17 +507,40 @@ async def run_webhook_case(key: str, no_open: bool = False, timeout_s: int = 420
                       f"skew={o.skew}s   (HMAC verified by the ingress)")
             if obs:
                 v = fold(obs, int(time.time()), order_id=order["id"])
-                print(f"\nworker    {v.verdict.value} @ {v.confidence:.2f} "
-                      f"-> {v.proposed_action.value}")
-                print(f"rules     {', '.join(v.rules_fired)}")
-                print("\nThe worker resolved this from the pushed webhook - "
-                      "see `docker compose logs worker` for its own log line.")
-                return 0
+                key = (v.verdict, round(v.confidence, 2))
+                if key != last:
+                    last = key
+                    print(f"     verdict  {v.verdict.value} @ "
+                          f"{v.confidence:.2f} -> {v.proposed_action.value}")
+                # Scenario A is two payments. Returning on the first webhook
+                # would report CONFIRMED_FAILED and miss the retry that
+                # settles the order - and watching the verdict move from the
+                # one to the other is the whole demo.
+                if v.verdict == case.expect:
+                    print(f"\nworker    {v.verdict.value} @ {v.confidence:.2f}"
+                          f" -> {v.proposed_action.value}"
+                          f"   (expected {case.expect.value})")
+                    print(f"rules     {', '.join(v.rules_fired)}")
+                    print("\nResolved from the pushed webhook - see "
+                          "`docker compose logs worker` for the worker's line.")
+                    print(f"\nreal:     {case.real_parts}")
+                    print(f"supplied: {case.supplied_parts}")
+                    return 0
             await asyncio.sleep(2)
     finally:
         await infra.stop()
 
-    print("no webhook arrived in time - check the tunnel is still up")
+    # "Nothing arrived" and "what arrived did not settle the order" are
+    # different problems with different fixes, and saying the first when
+    # the second happened sent me looking at the tunnel for ten minutes.
+    if not seen:
+        print("\nno webhook arrived in time - check the tunnel is still up")
+    else:
+        print(f"\n{len(seen)} webhook(s) arrived, but the verdict never reached "
+              f"{case.expect.value}.")
+        if last:
+            print(f"last verdict: {last[0].value} @ {last[1]:.2f}")
+        print("The worker still acted on what it saw - `docker compose logs worker`.")
     return 1
 
 

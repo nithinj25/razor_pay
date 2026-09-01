@@ -119,6 +119,18 @@ class Executor:
         self.exception_queue: list[dict] = []
 
     @property
+    def whatsapp_ready(self) -> bool:
+        """Whether a WhatsApp message has somewhere to go.
+
+        Read by the pipeline before the gate: a configured sender with a
+        demo recipient is a real destination, an unconfigured one is not.
+        """
+        return bool(
+            getattr(self.whatsapp, "configured", False)
+            and self.whatsapp.recipient_for("")
+        )
+
+    @property
     def seen_keys(self) -> set[str]:
         """Fed back into the gate so a repeat is vetoed, not re-executed."""
         return set(self.executed)

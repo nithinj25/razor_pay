@@ -111,7 +111,7 @@ services:
 
   worker:
     build: .
-    command: python -m services.worker
+    command: python -m services.worker --live
     environment: *app_env
     depends_on:
       postgres:   {condition: service_healthy}

@@ -10,7 +10,7 @@ re-derivation.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from core.events import Observation
@@ -20,7 +20,9 @@ from core.llm import LLM, NullLLM
 from core.trace import AgentStep, AgentSummary
 from core.verdicts import Action, Evidence, Verdict, VerdictResult
 from services.executor.main import Executor, Outcome
-from services.gate.rules import CustomerContext, GateDecision, evaluate, evidence_version
+from services.gate.rules import (
+    CustomerContext, GateDecision, _reachable, evaluate, evidence_version,
+)
 from services.resolver.graph import Resolver
 from services.scheduler.main import InMemoryScheduler, Scheduler
 from services.strategist.graph import Strategist
@@ -167,6 +169,15 @@ class Pipeline:
         payment_id = _target_payment(observations, verdict)
         ev_version = evidence_version(observations)
 
+        # Who we can actually reach, derived once from the payment entity
+        # and handed to the gate so it can re-derive reachability for the
+        # channel the model picks.
+        contact, email = _customer_of(latest)
+        customer = replace(
+            customer or CustomerContext(), contact=contact, email=email,
+            whatsapp_ready=getattr(self.executor, "whatsapp_ready", False),
+        )
+
         # -- Intent. Only CONFIRMED_FAILED reaches the strategist; every
         #    other verdict has a deterministic proposal.
         if verdict.verdict == Verdict.CONFIRMED_FAILED:
@@ -192,6 +203,14 @@ class Pipeline:
         d.voice_brief = getattr(self, "_pending_brief", None)
         self._pending_steps, self._pending_brief = (), None
 
+        # Which channel can carry the message is a fact about this order,
+        # not a judgement, so it is not the model's to make. If it chose
+        # one we cannot reach the customer on, move to one we can - among
+        # the channels this template is actually registered for. The gate
+        # re-derives reachability itself and vetoes if no move was found.
+        if d.intent is not None and d.intent.channel is not None:
+            d.intent = _route_to_reachable(d.intent, customer, d.trace)
+
         # -- Gate. Re-derives everything. This is the only authority.
         if d.intent is not None:
             d.gate = evaluate(
@@ -210,7 +229,6 @@ class Pipeline:
                         }
                     )
 
-            contact, email = _customer_of(latest)
             d.outcome = await self.executor.execute(
                 d.gate, d.intent, order_id=oid, payment_id=payment_id,
                 amount=amount, merchant=self.merchant,
@@ -301,6 +319,39 @@ def _target_payment(observations: list[Observation], v: VerdictResult) -> str:
     if st.failed:
         return max(st.failed, key=lambda p: p.failed_at or 0).payment_id
     return next(iter(st.payments), "")
+
+
+def _route_to_reachable(
+    intent: RecoveryIntent, customer: CustomerContext, trace: list[str]
+) -> RecoveryIntent:
+    """Move an unreachable channel onto one that can carry the message.
+
+    Only ever *narrows* to a channel the chosen template is already
+    registered for, so this cannot smuggle a message onto a rail the DLT
+    registration does not cover - the gate re-checks that too. If nothing
+    is reachable the intent is returned untouched and the gate vetoes it,
+    which is the correct outcome: an undeliverable message should read as
+    a veto, not as a success.
+    """
+    from core.intents import TEMPLATE_REGISTRY
+
+    if intent.channel is None or _reachable(intent.channel, customer):
+        return intent
+
+    template = TEMPLATE_REGISTRY.get(intent.template_id or "")
+    allowed = template.channels if template else frozenset()
+    # Ordered, not arbitrary: WhatsApp carries a link and reports delivery,
+    # SMS is the DLT-registered default, email is the weakest signal.
+    for candidate in (Channel.WHATSAPP, Channel.SMS, Channel.EMAIL):
+        if candidate in allowed and _reachable(candidate, customer):
+            trace.append(
+                f"channel {intent.channel.value} -> {candidate.value}: "
+                f"no destination for {intent.channel.value}"
+            )
+            return intent.model_copy(update={"channel": candidate})
+
+    trace.append(f"channel {intent.channel.value} unreachable, no alternative")
+    return intent
 
 
 def _customer_of(obs: Observation | None) -> tuple[str, str]:
