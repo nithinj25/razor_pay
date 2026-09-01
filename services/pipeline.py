@@ -203,13 +203,14 @@ class Pipeline:
         d.voice_brief = getattr(self, "_pending_brief", None)
         self._pending_steps, self._pending_brief = (), None
 
-        # Which channel can carry the message is a fact about this order,
-        # not a judgement, so it is not the model's to make. If it chose
-        # one we cannot reach the customer on, move to one we can - among
-        # the channels this template is actually registered for. The gate
-        # re-derives reachability itself and vetoes if no move was found.
+        # Which rail carries the message is a fact about this order and
+        # this deployment, not a judgement, so it is not the model's to
+        # make. Delivery gets exactly one owner: WhatsApp we send
+        # ourselves with the link's `notify` off, SMS and email we hand to
+        # Razorpay with `notify` on. The gate re-derives reachability for
+        # itself and vetoes if nothing was deliverable.
         if d.intent is not None and d.intent.channel is not None:
-            d.intent = _route_to_reachable(d.intent, customer, d.trace)
+            d.intent = _choose_channel(d.intent, customer, d.trace)
 
         # -- Gate. Re-derives everything. This is the only authority.
         if d.intent is not None:
@@ -321,35 +322,57 @@ def _target_payment(observations: list[Observation], v: VerdictResult) -> str:
     return next(iter(st.payments), "")
 
 
-def _route_to_reachable(
+def _choose_channel(
     intent: RecoveryIntent, customer: CustomerContext, trace: list[str]
 ) -> RecoveryIntent:
-    """Move an unreachable channel onto one that can carry the message.
+    """Pick the one rail this message goes out on, from facts.
 
-    Only ever *narrows* to a channel the chosen template is already
-    registered for, so this cannot smuggle a message onto a rail the DLT
-    registration does not cover - the gate re-checks that too. If nothing
-    is reachable the intent is returned untouched and the gate vetoes it,
-    which is the correct outcome: an undeliverable message should read as
-    a veto, not as a success.
+    Delivery has exactly one owner. When the channel is WhatsApp we send
+    it ourselves over Meta's API and the payment link is created with
+    `notify` off; on SMS or email we create the link with `notify` on and
+    Razorpay sends it. Those are the only two arrangements, and which one
+    applies has to be decided the same way every time.
+
+    Left to the model it was not. On identical inputs it chose SMS on one
+    run and WhatsApp on the next, so one customer with one debt got a
+    message on both rails across a retry - two notifications, two rails,
+    and no way to reproduce either. Channel is a question about what we
+    are capable of delivering and what the customer has consented to, not
+    a judgement about their situation, so it is derived here and the
+    model's choice is treated as the hint it is.
+
+    Only ever selects a channel the chosen template is registered for, so
+    this cannot move a message onto a rail its DLT registration does not
+    cover. The gate re-derives both properties for itself.
     """
     from core.intents import TEMPLATE_REGISTRY
 
-    if intent.channel is None or _reachable(intent.channel, customer):
+    if intent.channel is None:
         return intent
 
     template = TEMPLATE_REGISTRY.get(intent.template_id or "")
     allowed = template.channels if template else frozenset()
-    # Ordered, not arbitrary: WhatsApp carries a link and reports delivery,
-    # SMS is the DLT-registered default, email is the weakest signal.
-    for candidate in (Channel.WHATSAPP, Channel.SMS, Channel.EMAIL):
-        if candidate in allowed and _reachable(candidate, customer):
-            trace.append(
-                f"channel {intent.channel.value} -> {candidate.value}: "
-                f"no destination for {intent.channel.value}"
-            )
-            return intent.model_copy(update={"channel": candidate})
 
+    # A channel the customer actually engages with beats our preference,
+    # which is why it is consulted before either. Then WhatsApp, which we
+    # deliver ourselves and get read receipts for; then SMS, which is the
+    # DLT-registered default; then email, the weakest signal.
+    order = [customer.engagement_channel] if customer.engagement_channel else []
+    order += [Channel.WHATSAPP, Channel.SMS, Channel.EMAIL]
+
+    for candidate in order:
+        if candidate in allowed and _reachable(candidate, customer):
+            if candidate != intent.channel:
+                trace.append(
+                    f"channel {intent.channel.value} -> {candidate.value}: "
+                    f"delivery policy, not the model's pick"
+                )
+                return intent.model_copy(update={"channel": candidate})
+            return intent
+
+    # Nothing is deliverable. Leave the intent alone and let the gate
+    # veto it: an undeliverable message must read as a veto, not as a
+    # success, and the gate is the only authority that can say so.
     trace.append(f"channel {intent.channel.value} unreachable, no alternative")
     return intent
 

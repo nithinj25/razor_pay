@@ -151,9 +151,10 @@ def _reachable(channel: Channel, customer: CustomerContext) -> bool:
     if customer.contact is None and customer.email is None:
         return True
     if channel == Channel.WHATSAPP:
-        # The sender falls back to a configured demo recipient, which is
-        # a destination even when the order carries no contact.
-        return bool(customer.contact) or customer.whatsapp_ready
+        # Both halves are needed. A phone number is not a WhatsApp rail
+        # without a sender to put a message on it, and a configured
+        # sender with nobody to address is not one either.
+        return customer.whatsapp_ready and bool(customer.contact)
     if channel in (Channel.SMS, Channel.VOICE):
         return bool(customer.contact)
     if channel == Channel.EMAIL:

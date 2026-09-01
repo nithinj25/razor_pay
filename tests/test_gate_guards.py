@@ -86,17 +86,21 @@ def test_a_channel_with_no_destination_is_vetoed():
     assert any(v.rule == "UNREACHABLE" for v in d.vetoes), d.reason
 
 
-def test_whatsapp_is_reachable_through_a_configured_sender():
-    """A configured sender with a fallback recipient is a destination."""
+def test_whatsapp_needs_both_a_sender_and_a_number():
+    """Either half alone is not a rail."""
     s = sc.SCENARIO_B
-    ctx = CustomerContext(contact="", email="", whatsapp_ready=True)
+    wa = link_intent(channel=Channel.WHATSAPP)
 
-    d = evaluate(
-        link_intent(channel=Channel.WHATSAPP), s.observations(), s.evaluate_at,
-        customer=ctx,
-    )
+    both = CustomerContext(contact="919902740794", email="", whatsapp_ready=True)
+    assert evaluate(wa, s.observations(), s.evaluate_at, customer=both).allowed
 
-    assert d.allowed, d.reason
+    for half in (
+        CustomerContext(contact="919902740794", email="", whatsapp_ready=False),
+        CustomerContext(contact="", email="", whatsapp_ready=True),
+    ):
+        d = evaluate(wa, s.observations(), s.evaluate_at, customer=half)
+        assert not d.allowed
+        assert any(v.rule == "UNREACHABLE" for v in d.vetoes), d.reason
 
 
 def test_absent_reachability_information_does_not_block():
