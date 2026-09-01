@@ -345,10 +345,15 @@ async def resolve_order(order_id: str, case: LiveCase) -> int:
         print(f"  {tag} {s.agent:<11} {s.node:<16} {s.summary[:60]}")
         steps.append(s)
 
+    # The strategist gets the same supplied evidence as the resolver. Its
+    # precheck can settle a verdict before any fetch runs - as a business
+    # rejection does - so the strategist's probes become the only route to
+    # the downtime record, and without it E picks SMS over WhatsApp.
+    probes = {n: f for n, f in fetchers.items() if n in ("downtime", "history")}
     p = Pipeline(
         llm=llm, executor=ex,
         resolver=Resolver(llm=llm, fetchers=fetchers or None, on_step=on_step),
-        strategist=Strategist(llm=llm, on_step=on_step),
+        strategist=Strategist(llm=llm, probes=probes or None, on_step=on_step),
     )
     print("\nagents:")
     d = await p.process(
@@ -365,8 +370,25 @@ async def resolve_order(order_id: str, case: LiveCase) -> int:
     if d.outcome:
         print(f"outcome  {d.outcome.action.value} [{d.outcome.status}]")
         print(f"         {d.outcome.detail[:150]}")
-    if d.gate and d.gate.rendered:
-        print(f"\nmessage  {d.gate.rendered}")
+    # Print what actually went out, not the gate's render. The model fills
+    # the {link} slot with a URL it invented - the real one does not exist
+    # until the executor creates the payment link - so `rendered` still
+    # holds the placeholder while the sent body holds the real link.
+    sent = ""
+    if d.outcome and d.outcome.request:
+        wa = (d.outcome.request or {}).get("whatsapp") or {}
+        params = ((wa.get("template") or {}).get("components") or [{}])[0].get(
+            "parameters", []
+        )
+        if params:
+            sent = " | ".join(x.get("text", "") for x in params)
+        else:
+            sent = ((wa.get("text") or {}).get("body", "")
+                    or d.outcome.request.get("body", ""))
+    if sent:
+        print(f"\nsent     {sent}")
+    elif d.gate and d.gate.rendered:
+        print(f"\nrendered {d.gate.rendered}   (link substituted at send time)")
     if d.voice_brief:
         print(f"\ncall brief: {d.voice_brief.objective}")
         for i, q in enumerate(d.voice_brief.questions, 1):

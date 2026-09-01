@@ -293,3 +293,52 @@ def test_a_failure_complaint_is_not_a_debit_claim():
 
     claim = CustomerClaim(claims_debited=False, reference="230901495295", confidence=0.9)
     assert assess_claim(claim, "230901495295").match is ClaimMatch.NONE
+
+
+def test_business_rejection_is_a_confirmed_failure():
+    """A merchant-side rejection never reaches the bank.
+
+    Razorpay's test card 5104 0600 0000 0008 declines on a domestic-only
+    account with error_source=business, step=payment_initiation,
+    reason=international_transaction_not_allowed. `triage` already called
+    that "no debit"; the fold had no rule for it and fell through to
+    R15_insufficient_evidence, so a real payment produced UNRESOLVED where
+    both components should have agreed on CONFIRMED_FAILED.
+    """
+    from core.events import Observation
+
+    obs = [Observation(
+        event_id="evt_biz", event_type="payment.failed",
+        order_id="order_biz", payment_id="pay_biz",
+        event_time=sc.BASE, received_at=sc.BASE + 2,
+        status="failed", amount=sc.AMOUNT, method="card",
+        error_source="business", error_step="payment_initiation",
+        error_reason="international_transaction_not_allowed",
+    )]
+    v = fold(obs, sc.BASE + 60, order_id="order_biz")
+
+    assert v.verdict == Verdict.CONFIRMED_FAILED
+    assert "R9b_business_rejection" in v.rules_fired
+    # It must clear the recovery-link floor, or the merchant is told the
+    # payment failed and then nothing happens.
+    assert v.confidence >= 0.90
+    # And nothing is left in play - the bank was never asked.
+    assert v.any_sibling_non_terminal is False
+
+
+def test_triage_and_fold_agree_on_business_rejections():
+    """The disagreement this rule closes, asserted directly."""
+    from core.events import Observation
+    from services.triage.classify import Decision, triage
+
+    o = Observation(
+        event_id="e", event_type="payment.failed", order_id="o", payment_id="p",
+        event_time=sc.BASE, received_at=sc.BASE, status="failed",
+        amount=sc.AMOUNT, error_source="business",
+        error_step="payment_initiation", error_reason="card_not_allowed",
+    )
+    _, decision, _ = triage(o)
+    v = fold([o], sc.BASE + 60, order_id="o")
+
+    assert decision == Decision.FAILED
+    assert v.verdict == Verdict.CONFIRMED_FAILED

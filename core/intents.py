@@ -77,7 +77,7 @@ TEMPLATE_REGISTRY: dict[str, Template] = {
         whatsapp_name="rcv_retry",
         dlt_id="1207162458392017001",
         body="Your payment of Rs {amount} to {merchant} did not go through. "
-             "Complete it here: {link}",
+             "Complete it here: {link} You have not been charged.",
         variables=("amount", "merchant", "link"),
         channels=frozenset({Channel.SMS, Channel.WHATSAPP, Channel.EMAIL}),
         category=Category.SERVICE_IMPLICIT,
@@ -87,7 +87,7 @@ TEMPLATE_REGISTRY: dict[str, Template] = {
         whatsapp_name="rcv_upi_alt",
         dlt_id="1207162458392017002",
         body="Your {method} payment of Rs {amount} to {merchant} could not be "
-             "processed. Pay by UPI instead: {link}",
+             "processed. Pay by UPI instead: {link} You have not been charged.",
         variables=("method", "amount", "merchant", "link"),
         channels=frozenset({Channel.SMS, Channel.WHATSAPP}),
         category=Category.SERVICE_IMPLICIT,
@@ -96,8 +96,11 @@ TEMPLATE_REGISTRY: dict[str, Template] = {
         template_id="RCV_DOWNTIME_WAIT",
         whatsapp_name="rcv_downtime_wait",
         dlt_id="1207162458392017003",
+        # Trailing punctuation alone does not satisfy Meta's rule that a
+        # variable may not end the template - real words have to follow.
         body="Your bank is temporarily unavailable. Your payment of Rs {amount} "
-             "to {merchant} has not been charged. Please retry after {window}.",
+             "to {merchant} has not been charged. Please retry after {window} "
+             "and your order will be held.",
         variables=("amount", "merchant", "window"),
         channels=frozenset({Channel.SMS, Channel.WHATSAPP}),
         category=Category.SERVICE_IMPLICIT,

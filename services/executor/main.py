@@ -335,6 +335,14 @@ class Executor:
                     to, template.whatsapp_name, "en_US", params
                 )
                 mode = f"template {template.whatsapp_name}"
+                if not res.ok and "template not found" in res.detail:
+                    # Meta reviews templates, and a review queue must not
+                    # take the message with it. Freeform still needs the
+                    # 24h window open, so this is a demo-and-development
+                    # fallback rather than a production path - and the
+                    # outcome says which one was used.
+                    res = await self.whatsapp.send_text(to, body)
+                    mode = "freeform (template unapproved; needs an open 24h window)"
             else:
                 res = await self.whatsapp.send_text(to, body)
                 mode = "freeform (needs an open 24h window)"
@@ -377,31 +385,26 @@ class Executor:
 def _with_link(rendered: str, link: str) -> str:
     """Replace whatever stands in the {link} slot with the real URL.
 
-    Only called for templates that declare a `link` variable.
-
     The payment link does not exist until the executor creates it, so the
     model cannot know it - and asked for a link variable, a model will
-    confidently invent one ("https://pay.acme/alt"). Matching only the
-    literal "{link}" left the invented URL in place and appended the real
-    one, so the customer received two links, the first of which 404s.
+    confidently invent one ("https://pay.acme/link"). Whatever it invented
+    has to be swapped for the real URL before the message goes out.
 
-    So: whatever occupies the final token, replace it. A URL, a
-    placeholder, or the bare word "link" all mean the same thing here.
+    This matched the *final token* until the templates gained a trailing
+    line ("You have not been charged.") to satisfy Meta's rule that a
+    variable may not end a template. The link stopped being last, the
+    match stopped firing, and a real customer would have received a link
+    that 404s. So: replace the URL wherever it sits.
     """
-    if not link:
-        return rendered
-    if link in rendered:
+    if not link or link in rendered:
         return rendered
 
-    parts = rendered.rstrip().rsplit(" ", 1)
-    if len(parts) == 2:
-        head, last = parts
-        looks_like_a_slot = (
-            last.startswith(("http://", "https://", "{"))
-            or last.rstrip(".").lower() in ("link", "url")
-        )
-        if looks_like_a_slot:
-            return f"{head} {link}"
+    tokens = rendered.split(" ")
+    for i, tok in enumerate(tokens):
+        bare = tok.strip(".,;:")
+        if bare.startswith(("http://", "https://", "{")) or bare.lower() in ("link", "url"):
+            tokens[i] = tok.replace(bare, link)
+            return " ".join(tokens)
     return f"{rendered.rstrip()} {link}"
 
 

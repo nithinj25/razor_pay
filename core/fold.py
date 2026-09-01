@@ -373,6 +373,21 @@ def fold(
         fired.append("R9_customer_terminal")
         return result(Verdict.CONFIRMED_FAILED, 0.95)
 
+    # -- R9b  Merchant-side rejection. The business's own configuration
+    #         refused the payment - an international card where only
+    #         domestic is accepted, an amount outside configured limits -
+    #         so the request never reached the bank and no debit was
+    #         possible. Definitive in the same way a customer cancellation
+    #         is, and `is_flippable` already treats it as terminal.
+    #
+    #         Found by a real test payment: `triage` classified BUSINESS as
+    #         "merchant-side rejection; no debit" while the fold had no
+    #         rule for it and fell through to R15_insufficient_evidence.
+    #         Two components disagreeing about the same fact.
+    if src == ErrorSource.BUSINESS:
+        fired.append("R9b_business_rejection")
+        return result(Verdict.CONFIRMED_FAILED, 0.95)
+
     # -- R10  A known, active, method-scoped outage at a pre-debit step.
     #         The bank was never asked to move money, so there is nothing
     #         in flight to wait for. Scenario E.
