@@ -399,11 +399,98 @@ async def resolve_order(order_id: str, case: LiveCase) -> int:
     return 0 if ok else 1
 
 
+async def run_webhook_case(key: str, no_open: bool = False, timeout_s: int = 420) -> int:
+    """One command, the architecture's own path: webhook -> worker -> phone.
+
+    `run` polls Razorpay's API. That is a documented integration pattern
+    and not a shortcut, but it is not the path this project describes -
+    and a demo should exercise the architecture it claims. So this one
+    drives the real thing: Razorpay POSTs a signed webhook at the public
+    ingress, the ingress verifies the HMAC and appends the observation,
+    the worker consumes it from Kafka and resolves, and the executor
+    acts. No second command in between.
+
+    This function watches the event store; it does none of that work
+    itself. What you see is the deployed system behaving.
+    """
+    from core.config import settings
+    from core.fold import fold
+    from core.infra import Infra, use_psycopg_compatible_loop
+    from harness.live import list_webhooks
+
+    case = CASES.get(key.upper())
+    if case is None:
+        print(f"unknown case {key}. try: {', '.join(CASES)}")
+        return 1
+
+    hooks = [h for h in await list_webhooks() if h.get("active")]
+    if not hooks:
+        print("No active Razorpay webhook - the automatic path needs one:")
+        print("  tools\\cloudflared.exe tunnel --url http://localhost:8000")
+        print("  python -m harness.live hook <the https url it prints>")
+        return 1
+    print(f"webhook   {hooks[0]['url']}")
+
+    cfg = settings()
+    order = await _create_with(AMOUNT, case)
+    print(f"order     {order['id']}   Rs {order['amount'] / 100:,.2f}")
+
+    page = CHECKOUT_HTML.format(
+        key_id=cfg.rzp_key_id, order_id=order["id"],
+        amount=order["amount"], rupees=order["amount"] / 100,
+    )
+    path = f"checkout_{case.key}.html"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(page)
+    print(f"\nDO THIS:  {case.what_to_do}")
+    if not no_open:
+        import os
+
+        webbrowser.open(f"file://{os.path.abspath(path)}")
+
+    use_psycopg_compatible_loop()
+    infra = Infra(cfg)
+    await infra.start()
+    print(f"\nstore     {type(infra.store).__name__}"
+          + (f"  degraded={infra.degraded}" if infra.degraded else ""))
+    print("\nwaiting for Razorpay to deliver the webhook ...")
+
+    seen: set[str] = set()
+    deadline = time.time() + timeout_s
+    try:
+        while time.time() < deadline:
+            obs = await infra.store.load(order["id"])
+            for o in sorted(obs, key=lambda x: x.received_at):
+                if o.event_id in seen:
+                    continue
+                seen.add(o.event_id)
+                print(f"  <- {o.event_type:<20} {o.payment_id or '':<24} "
+                      f"skew={o.skew}s   (HMAC verified by the ingress)")
+            if obs:
+                v = fold(obs, int(time.time()), order_id=order["id"])
+                print(f"\nworker    {v.verdict.value} @ {v.confidence:.2f} "
+                      f"-> {v.proposed_action.value}")
+                print(f"rules     {', '.join(v.rules_fired)}")
+                print("\nThe worker resolved this from the pushed webhook - "
+                      "see `docker compose logs worker` for its own log line.")
+                return 0
+            await asyncio.sleep(2)
+    finally:
+        await infra.stop()
+
+    print("no webhook arrived in time - check the tunnel is still up")
+    return 1
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Live Razorpay demo, case by case.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("list", help="what each case needs you to do")
+
+    w = sub.add_parser("live", help="one command, webhook-driven end to end")
+    w.add_argument("case", help="A B C D E F G")
+    w.add_argument("--no-open", action="store_true")
 
     r = sub.add_parser("run", help="create an order, pay it, resolve it")
     r.add_argument("case", help="A B C D E F G")
@@ -427,6 +514,9 @@ def main() -> None:
                 print(f"      supplied: {c.supplied_parts}")
             print()
         return
+
+    if args.cmd == "live":
+        sys.exit(asyncio.run(run_webhook_case(args.case, args.no_open)))
 
     if args.cmd == "run":
         sys.exit(asyncio.run(run_case(args.case, args.no_open, not args.no_wait)))
