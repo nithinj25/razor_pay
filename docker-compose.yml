@@ -125,6 +125,11 @@ services:
     command: uvicorn web.main:app --host 0.0.0.0 --port 8080
     ports: ["8080:8080"]
     environment: *app_env
+    volumes:
+      # The metrics screen reads the artifact `harness.demo` writes on the
+      # host. Without this the tab is a permanent 404 for anyone who runs
+      # `docker compose up` and clicks it.
+      - ./.artifacts:/app/.artifacts:ro
     depends_on:
       postgres: {condition: service_healthy}
 

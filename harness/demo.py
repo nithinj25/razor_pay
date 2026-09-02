@@ -40,6 +40,11 @@ class Run:
     llm_calls: int = 0
     tokens: int = 0
     latencies: list[float] = field(default_factory=list)
+    #: Scenarios whose evidence never arrived - a provider was down or
+    #: throttled. Scored apart from wrong answers: the system declining
+    #: to answer is the designed behaviour under degradation (I5), and
+    #: counting it as a miss reports a correct system as a broken one.
+    degraded_keys: set[str] = field(default_factory=set)
 
     @property
     def correct(self) -> int:
@@ -73,6 +78,8 @@ async def run_nishchay(real_llm: bool = False) -> Run:
         got = final.verdict.verdict
         run.confusion[(s.ground_truth.value, got.value)] += 1
         run.vetoes.extend(p.vetoes)
+        if any(st.decision and st.decision.degraded for st in r.steps):
+            run.degraded_keys.add(s.key)
         run.llm_calls += sum(st.decision.llm_calls for st in r.steps if st.decision)
         run.latencies.extend(st.decision.latency_s for st in r.steps if st.decision)
 
@@ -174,7 +181,12 @@ def print_report(run: Run, base: dict) -> None:
               f"[green]{run.false_positives}[/green]" if run.false_positives == 0 else f"[red]{run.false_positives}[/red]")
     h.add_row("Revenue correctly recovered", "Rs 0.00", f"Rs {run.recovered_paise/100:,.2f}")
     h.add_row("Escalated to a human", "0", str(run.escalated))
-    h.add_row("Verdict accuracy", "-", f"{run.correct}/{run.total}")
+    missed = run.total - run.correct
+    acc = f"{run.correct}/{run.total}"
+    if missed and run.degraded_keys:
+        acc += (f"  ({', '.join(sorted(run.degraded_keys))} ran degraded - "
+                f"provider unavailable, not a wrong answer)")
+    h.add_row("Verdict accuracy", "-", acc)
     h.add_row("LLM calls (6 scenarios)", "-", str(run.llm_calls))
     h.add_row("p95 time to verdict", "-", f"{run.p95_latency*1000:.0f} ms")
     con.print(h)

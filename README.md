@@ -82,11 +82,19 @@ event store, so scenario F fails closed even if the schema layer were
 bypassed entirely.
 
 Free tiers rate-limit mid-loop. That is why `auto` builds a *chain*: a 429
-on Gemini costs a retry against NVIDIA rather than dropping the agents
-onto their deterministic path in the middle of a recording. When every
-provider is out, Screen 5 marks those steps `fallback` in amber — the
-degradation stays visible rather than silent, and the trace names the
-provider that actually answered.
+on Gemini is meant to cost a retry against the next provider rather than
+dropping the agents onto their deterministic path mid-recording.
+
+**As of 2 September 2026 that chain is one provider deep.** NVIDIA's
+`integrate.api.nvidia.com` endpoint returns `410 Gone`, so a Gemini 429
+currently degrades straight to the deterministic path. The chain is
+built and tested; the second rail is out. Set `ANTHROPIC_API_KEY` for a
+working fallback.
+
+When every provider is out, Screen 5 marks those steps `fallback` in
+amber — the degradation stays visible rather than silent, the trace
+names the provider that actually answered, and `harness.demo` reports a
+degraded scenario as degraded rather than scoring it as a wrong verdict.
 
 ---
 
