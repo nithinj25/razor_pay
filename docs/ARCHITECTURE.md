@@ -303,9 +303,39 @@ MAX_TURNS = 6 ; MAX_TOKENS = 8_000 ; MAX_LATENCY = 15.0
 ## 8. Gate — see GUARDRAILS.md for the full rule set
 
 Two families: **correctness invariants** (sibling state, idempotency,
-confidence floors by reversibility) and **compliance** (DND category,
-consent window, template registration, calling hours). Every veto is
-persisted with its reason. The veto log is a deliverable.
+confidence floors by reversibility, recovery-chain depth, channel
+reachability) and **compliance** (DND category, consent window,
+template registration, calling hours). Every veto is persisted with its
+reason. The veto log is a deliverable.
+
+Fourteen rules as of 2 September 2026:
+
+```
+VERDICT  SETTLED  TAT  CAPTURE  REFUND        state
+FLOOR    I7                                   confidence
+DLT  TCCCPR  DND  CONSENT  HOURS  OPT_OUT     compliance
+RECOVERY_CHAIN   UNREACHABLE                  found by running it
+```
+
+The last two were added after live runs, not from the spec. Both had
+the same shape: an invariant that was stated correctly and enforced
+nowhere, and a run that reported success while doing nothing useful.
+See REJECTED.md.
+
+### Channel is derived, not chosen
+
+Delivery has exactly one owner. On WhatsApp we send it ourselves over
+Meta's Cloud API and create the payment link with `notify` off; on SMS
+or email the link carries `notify` on and Razorpay sends it. Those are
+the only two arrangements.
+
+Which one applies was originally the model's call, and it did not
+choose stably - SMS on one run, WhatsApp on the next, for identical
+inputs, so one debt reached a customer on two rails across a retry.
+`services/pipeline.py::_choose_channel` now derives it: engaged channel
+first, then WhatsApp, then SMS, then email, and only ever among
+channels the chosen template is registered for. The gate re-derives
+reachability independently and vetoes if nothing is deliverable.
 
 ---
 

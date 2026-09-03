@@ -62,6 +62,22 @@ def correctness_gate(intent, ctx):
             veto("order already settled")
         if ctx.age_banking < TAT_WINDOW and ctx.source in AMBIGUOUS_SOURCES:
             veto("inside RBI T+1 banking-day window")
+        # Added 2 Sep 2026 after a live run. A recovery link creates a
+        # new order (I3), so a link sent on a payment that is *itself*
+        # on a link we sent makes a third order for one debt. The
+        # executor stamped `source_order` into every link it created
+        # and nothing read it back, so the chain was unbounded - the
+        # agent causing the exposure the system exists to close.
+        # Re-derived from the payment entity's notes, where Razorpay
+        # carries them, so it survives a worker restart.
+        if ctx.payment_is_on_a_recovery_link:
+            veto("RECOVERY_CHAIN: already on a link for <source_order>")
+        # Added the same day. The model picks a channel from a menu of
+        # three; whether anything can be delivered over it is a fact
+        # about this order. Without this, a correct message was handed
+        # to a rail with no destination and the run logged EXECUTED.
+        if not reachable(intent.channel, ctx):
+            veto(f"UNREACHABLE: no destination for {intent.channel}")
     if intent.action in MONEY_MOVING and not idem_fresh(intent):
         veto("duplicate action, idempotency key seen")
     if intent.confidence < FLOOR[intent.action]:
