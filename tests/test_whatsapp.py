@@ -288,9 +288,9 @@ def test_receipts_extracted_from_metas_envelope():
 
     rows = extract_statuses({"entry": [{"changes": [{"value": {"statuses": [
         {"id": "wamid.A", "status": "delivered", "timestamp": "1700000000",
-         "recipient_id": "919902740794"},
+         "recipient_id": "919000000000"},
         {"id": "wamid.B", "status": "failed", "timestamp": "1700000001",
-         "recipient_id": "919902740794",
+         "recipient_id": "919000000000",
          "errors": [{"code": 131047, "title": "Re-engagement message"}]},
     ]}}]}]})
     assert [r["status"] for r in rows] == ["delivered", "failed"]
@@ -302,7 +302,7 @@ def test_inbound_customer_messages_are_ignored():
     from services.ingress.whatsapp_hook import extract_statuses
 
     assert extract_statuses({"entry": [{"changes": [{"value": {
-        "messages": [{"id": "wamid.IN", "from": "919902740794"}]
+        "messages": [{"id": "wamid.IN", "from": "919000000000"}]
     }}]}]}) == []
 
 

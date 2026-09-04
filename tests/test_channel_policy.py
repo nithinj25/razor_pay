@@ -32,7 +32,7 @@ def intent(channel: Channel, template_id: str = "RCV_RETRY") -> RecoveryIntent:
 
 def test_the_same_inputs_always_choose_the_same_rail():
     """The bug this exists for: the pick must not vary per invocation."""
-    who = CustomerContext(contact="919902740794", email="a@b.c", whatsapp_ready=True)
+    who = CustomerContext(contact="919000000000", email="a@b.c", whatsapp_ready=True)
 
     picks = {
         _choose_channel(intent(guess), who, []).channel
@@ -44,21 +44,21 @@ def test_the_same_inputs_always_choose_the_same_rail():
 
 def test_whatsapp_wins_when_we_can_deliver_it_ourselves():
     """Preferred because we send it and get a delivery receipt back."""
-    who = CustomerContext(contact="919902740794", email="a@b.c", whatsapp_ready=True)
+    who = CustomerContext(contact="919000000000", email="a@b.c", whatsapp_ready=True)
 
     assert _choose_channel(intent(Channel.SMS), who, []).channel == Channel.WHATSAPP
 
 
 def test_sms_carries_it_when_whatsapp_is_not_configured():
     """Without a sender there is no WhatsApp rail, so Razorpay notifies."""
-    who = CustomerContext(contact="919902740794", email="a@b.c", whatsapp_ready=False)
+    who = CustomerContext(contact="919000000000", email="a@b.c", whatsapp_ready=False)
 
     assert _choose_channel(intent(Channel.WHATSAPP), who, []).channel == Channel.SMS
 
 
 def test_a_channel_the_customer_engages_with_beats_our_preference():
     who = CustomerContext(
-        contact="919902740794", email="a@b.c", whatsapp_ready=True,
+        contact="919000000000", email="a@b.c", whatsapp_ready=True,
         engagement_channel=Channel.SMS,
     )
 

@@ -91,11 +91,11 @@ def test_whatsapp_needs_both_a_sender_and_a_number():
     s = sc.SCENARIO_B
     wa = link_intent(channel=Channel.WHATSAPP)
 
-    both = CustomerContext(contact="919902740794", email="", whatsapp_ready=True)
+    both = CustomerContext(contact="919000000000", email="", whatsapp_ready=True)
     assert evaluate(wa, s.observations(), s.evaluate_at, customer=both).allowed
 
     for half in (
-        CustomerContext(contact="919902740794", email="", whatsapp_ready=False),
+        CustomerContext(contact="919000000000", email="", whatsapp_ready=False),
         CustomerContext(contact="", email="", whatsapp_ready=True),
     ):
         d = evaluate(wa, s.observations(), s.evaluate_at, customer=half)
