@@ -3,636 +3,982 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nishchay — architecture</title>
+<title>Nishchay Architecture Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
 <style>
+  /* ============================================================ tokens
+     Palette lifted from web/console.html so the deck and the product
+     read as one system rather than two. */
   :root{
-    --bg:#0A0E14;
-    --panel:#121821;
-    --panel-2:#0F151D;
-    --line:#26313F;
-    --text:#E8EEF5;
-    --muted:#8FA0B4;
-    --det:#3395FF;        /* deterministic — solid */
-    --model:#AE8BFF;      /* model — dashed */
-    --money:#F5A623;      /* money-moving */
-    --bad:#FF5C5C;
-    --good:#3FD68C;
-    --mono:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono",Menlo,Consolas,monospace;
-    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --ground:#080C13;
+    --grid:rgba(51,149,255,.045);
+    --surface:#111A26;
+    --surface-2:#0C1420;
+    --line:#223047;
+    --line-soft:#1A2536;
+    --text:#E6ECF7;
+    --muted:#8593AB;
+    --dim:#5D6980;
+
+    --det:#3395FF;          /* deterministic — solid border   */
+    --det-soft:#7CBCFF;
+    --model:#A996F0;        /* model         — dashed border  */
+    --money:#E1AC63;        /* money-moving  — third accent   */
+    --good:#5FC894;
+    --bad:#F0918B;
+
+    --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+    --disp:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+    --body:"Inter","Segoe UI",system-ui,sans-serif;
   }
+
   *{box-sizing:border-box}
   html,body{height:100%}
   body{
-    margin:0;background:var(--bg);color:var(--text);
-    font-family:var(--sans);font-size:20px;line-height:1.5;
+    margin:0;
+    background:
+      linear-gradient(var(--grid) 1px,transparent 1px) 0 0/64px 64px,
+      linear-gradient(90deg,var(--grid) 1px,transparent 1px) 0 0/64px 64px,
+      radial-gradient(120% 90% at 12% 0%,#0E1725 0%,var(--ground) 62%);
+    color:var(--text);
+    font-family:var(--body);font-size:20px;line-height:1.5;
     -webkit-font-smoothing:antialiased;
-    display:flex;flex-direction:column;overflow:hidden;
+    display:grid;grid-template-columns:78px 1fr;
+    overflow:hidden;
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
   }
 
-  /* ---------------------------------------------------------- chrome */
-  header{
-    display:flex;align-items:baseline;gap:22px;
-    padding:26px 48px 0;flex:0 0 auto;
+  /* ============================================================= spine */
+  .spine{
+    border-right:1px solid var(--line-soft);
+    display:flex;flex-direction:column;align-items:center;
+    padding:26px 0 24px;gap:0;
   }
-  .brand{font-size:19px;font-weight:600;letter-spacing:.02em}
-  .brand span{color:var(--det)}
-  .sep{color:var(--line)}
-  .title{font-size:19px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-  .clock{
-    margin-left:auto;font-family:var(--mono);font-size:15px;
-    color:var(--muted);opacity:.7;letter-spacing:.04em;
+  .spine .mark{
+    font-family:var(--mono);font-size:12px;letter-spacing:.22em;
+    color:var(--det);writing-mode:vertical-rl;transform:rotate(180deg);
+    margin-bottom:22px;
+  }
+  .ticks{flex:1;display:flex;flex-direction:column;justify-content:center;gap:0}
+  .tick{
+    width:78px;height:34px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;position:relative;border:0;background:none;padding:0;
+  }
+  .tick::before{
+    content:"";width:18px;height:1.5px;background:var(--line);
+    transition:width .18s ease,background .18s ease;
+  }
+  .tick:hover::before{width:26px;background:var(--dim)}
+  .tick.on::before{width:34px;background:var(--det)}
+  .tick.apx::before{background:var(--line-soft)}
+  .tick.apx.on::before{background:var(--model)}
+  .tick:focus-visible{outline:1px solid var(--det);outline-offset:-6px}
+  .spine .idx{
+    font-family:var(--mono);font-size:13px;color:var(--dim);
+    font-variant-numeric:tabular-nums;
   }
 
-  main{flex:1 1 auto;display:flex;align-items:center;justify-content:center;padding:0 48px;min-height:0}
-  .stage{width:100%;max-width:1640px}
+  /* ============================================================= frame */
+  .frame{display:flex;flex-direction:column;min-width:0;height:100vh}
+
+  .rail{
+    display:flex;align-items:center;gap:20px;
+    padding:24px 46px 18px;border-bottom:1px solid var(--line-soft);
+    flex:0 0 auto;
+  }
+  .eyebrow{
+    font-family:var(--mono);font-size:12px;letter-spacing:.2em;
+    text-transform:uppercase;color:var(--dim);
+  }
+  .rail h1{
+    margin:0;font-family:var(--disp);font-size:27px;font-weight:600;
+    letter-spacing:-.014em;line-height:1.1;
+  }
+  .rail .apxflag{
+    font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--model);border:1px solid var(--model);border-radius:4px;padding:3px 9px;
+  }
+  .tc{
+    margin-left:auto;text-align:right;font-family:var(--mono);
+    font-variant-numeric:tabular-nums;
+  }
+  .tc .win{font-size:16px;color:var(--muted);letter-spacing:.04em}
+  .tc .of{font-size:12px;color:var(--dim);letter-spacing:.14em;margin-top:3px}
+
+  main{
+    flex:1 1 auto;display:flex;align-items:center;
+    padding:0 46px;min-height:0;overflow:hidden;
+  }
+  .stage{width:100%;max-width:1680px;margin:0 auto}
 
   .step{display:none}
-  .step.show{display:block}
-  .step.show .anim{
-    opacity:0;transform:translateY(10px);
-    animation:rise .24s ease forwards;
-  }
-  @keyframes rise{to{opacity:1;transform:none}}
+  .step.show{display:block;animation:rise .22s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
 
-  footer{
-    flex:0 0 auto;padding:0 48px 30px;
-    display:flex;align-items:flex-end;gap:32px;
+  /* ============================================================== base */
+  .base{
+    flex:0 0 auto;border-top:1px solid var(--line-soft);
+    padding:20px 46px 24px;display:flex;align-items:center;gap:34px;
   }
   .caption{
-    font-size:23px;line-height:1.48;max-width:1180px;color:var(--text);
-    border-left:3px solid var(--det);padding-left:22px;
+    font-size:22px;line-height:1.45;max-width:1120px;color:var(--muted);
   }
-  .caption b{color:#fff;font-weight:600}
-  .caption code{font-family:var(--mono);font-size:.92em;color:var(--det)}
-  .keys{
-    margin-left:auto;font-family:var(--mono);font-size:14px;color:var(--muted);
-    opacity:.55;white-space:nowrap;padding-bottom:4px;
+  .caption b{color:var(--text);font-weight:600}
+  .caption code{font-family:var(--mono);font-size:.9em;color:var(--det-soft)}
+  .controls{margin-left:auto;display:flex;align-items:center;gap:16px}
+  .hint{
+    font-family:var(--mono);font-size:12px;color:var(--dim);
+    letter-spacing:.06em;white-space:nowrap;
   }
-  .nextbtn{
-    font-family:var(--mono);font-size:16px;color:var(--text);
-    background:rgba(51,149,255,.10);border:1.5px solid var(--det);
-    border-radius:8px;padding:11px 20px;cursor:pointer;
-    transition:background .18s ease;white-space:nowrap;
+  .next{
+    font-family:var(--mono);font-size:15px;color:var(--text);letter-spacing:.04em;
+    background:transparent;border:1px solid var(--det);border-radius:6px;
+    padding:11px 22px;cursor:pointer;transition:background .16s ease;
   }
-  .nextbtn:hover{background:rgba(51,149,255,.22)}
-  .dots{display:flex;gap:9px;margin-left:auto;align-items:center}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--line);transition:background .2s ease,transform .2s ease}
-  .dot.on{background:var(--det);transform:scale(1.35)}
+  .next:hover{background:rgba(51,149,255,.14)}
+  .next:focus-visible{outline:2px solid var(--det-soft);outline-offset:2px}
 
-  /* ------------------------------------------------------- primitives */
-  .box{
-    border:1.5px solid var(--line);border-radius:10px;background:var(--panel);
-    padding:16px 20px;
-  }
-  .det{border-color:var(--det);background:rgba(51,149,255,.07)}
-  .model{border-style:dashed;border-color:var(--model);background:rgba(174,139,255,.07)}
-  .money{border-color:var(--money);background:rgba(245,166,35,.08)}
-  .bad{border-color:var(--bad);background:rgba(255,92,92,.09)}
-  .good{border-color:var(--good);background:rgba(63,214,140,.09)}
+  /* ======================================================== primitives */
   .mono{font-family:var(--mono)}
-  .lbl{
-    font-family:var(--mono);font-size:15px;letter-spacing:.1em;
-    text-transform:uppercase;color:var(--muted);
-  }
-  .tag{
-    display:inline-block;font-family:var(--mono);font-size:15px;
-    padding:3px 9px;border-radius:5px;border:1px solid var(--line);color:var(--muted);
-  }
-  .tag.m{border-color:var(--model);color:var(--model)}
-  .tag.d{border-color:var(--det);color:var(--det)}
-  .red{color:var(--bad)} .green{color:var(--good)}
-  .amber{color:var(--money)} .violet{color:var(--model)} .blue{color:var(--det)}
-  .dim{color:var(--muted)}
+  .tnum{font-variant-numeric:tabular-nums}
+  .k{color:var(--det)} .m{color:var(--model)} .y{color:var(--money)}
+  .g{color:var(--good)} .r{color:var(--bad)} .d{color:var(--dim)}
+  .u{color:var(--muted)}
+  .text{color:var(--text)}
 
-  /* --------------------------------------------------------- step 1 */
-  .rail{position:relative;margin:8px 0 30px;padding-left:150px}
-  .rail::before{
-    content:"";position:absolute;left:150px;right:0;top:34px;height:2px;background:var(--line);
+  .lab{
+    font-family:var(--mono);font-size:12px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--dim);
   }
-  .events{display:flex;gap:0;position:relative}
-  .ev{width:420px;position:relative;padding-top:56px}
-  .ev::before{
-    content:"";position:absolute;left:0;top:27px;width:16px;height:16px;border-radius:50%;
-    background:var(--bg);border:2.5px solid var(--det);
+  .pill{
+    display:inline-block;font-family:var(--mono);font-size:13px;letter-spacing:.05em;
+    padding:3px 10px;border-radius:4px;border:1px solid var(--line);color:var(--muted);
   }
-  .ev.g::before{border-color:var(--good)}
-  .ev .t{position:absolute;top:-4px;left:-4px;font-family:var(--mono);font-size:16px;color:var(--muted)}
-  .ev .n{font-family:var(--mono);font-size:21px;font-weight:600}
-  .ev .m{font-family:var(--mono);font-size:16px;color:var(--muted);margin-top:3px}
-  .railcap{
-    position:absolute;left:0;top:22px;font-family:var(--mono);font-size:17px;color:var(--muted);
-  }
-  .down{display:flex;align-items:center;gap:20px;margin-top:6px}
-  .arrowdown{
-    width:2px;height:40px;background:var(--bad);margin-left:158px;position:relative;
-  }
-  .arrowdown::after{
-    content:"";position:absolute;bottom:-1px;left:-5px;
-    border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid var(--bad);
-  }
-  .chain{display:flex;align-items:center;gap:18px;margin-left:60px}
-  .chain .ar{color:var(--bad);font-size:26px;line-height:1}
+  .pill.det{border-color:var(--det);color:var(--det)}
+  .pill.mdl{border-color:var(--model);color:var(--model);border-style:dashed}
+  .pill.mny{border-color:var(--money);color:var(--money)}
 
-  /* --------------------------------------------------------- step 2 */
-  .cols{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:4px}
-  .arrival{
-    display:flex;gap:14px;align-items:center;margin-bottom:22px;
-    font-family:var(--mono);font-size:17px;color:var(--muted);flex-wrap:wrap;
+  .card{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:18px 22px}
+  .card.det{border-color:var(--det);background:rgba(51,149,255,.06)}
+  .card.mdl{border-color:var(--model);border-style:dashed;background:rgba(169,150,240,.06)}
+  .card.mny{border-color:var(--money);background:rgba(225,172,99,.07)}
+  .card.bad{border-color:var(--bad);background:rgba(240,145,139,.08)}
+  .card.good{border-color:var(--good);background:rgba(95,200,148,.08)}
+
+  .scroll{overflow-x:auto}
+
+  /* ============================================================ step 1 */
+  .lane{position:relative;padding:0 0 0 128px;margin-bottom:8px}
+  .lane .who{
+    position:absolute;left:0;top:30px;font-family:var(--mono);font-size:15px;color:var(--dim);
+    letter-spacing:.08em;
   }
+  .track{position:relative;height:96px}
+  .track::before{
+    content:"";position:absolute;left:0;right:0;top:30px;height:1px;background:var(--line);
+  }
+  .node{position:absolute;top:0;width:330px}
+  .node::before{
+    content:"";position:absolute;left:0;top:24px;width:13px;height:13px;border-radius:50%;
+    background:var(--ground);border:2px solid var(--det);
+  }
+  .node.ok::before{border-color:var(--good)}
+  .node.no::before{border-color:var(--bad);background:var(--bad)}
+  .node .t{font-family:var(--mono);font-size:14px;color:var(--dim);letter-spacing:.08em}
+  .node .n{font-family:var(--mono);font-size:20px;font-weight:600;margin-top:22px}
+  .node .s{font-family:var(--mono);font-size:15px;color:var(--muted);margin-top:2px}
+
+  .verdictline{
+    display:flex;align-items:center;gap:16px;margin:20px 0 0 128px;
+    font-family:var(--mono);font-size:17px;
+  }
+  .ledger{
+    margin:26px 0 0 128px;border:1px solid var(--bad);border-radius:8px;
+    background:rgba(240,145,139,.07);padding:16px 22px;display:inline-block;
+  }
+  .ledger table{border-collapse:collapse;font-family:var(--mono);font-size:17px}
+  .ledger td{padding:5px 26px 5px 0}
+  .ledger tr.sum td{border-top:1px solid var(--bad);padding-top:9px;font-weight:600}
+
+  /* ============================================================ step 2 */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  .arrivals{display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap}
   .chip{
-    border:1px solid var(--line);border-radius:7px;padding:7px 13px;background:var(--panel-2);
-    color:var(--text);
+    border:1px solid var(--line);border-radius:6px;padding:8px 14px;background:var(--surface-2);
+    font-family:var(--mono);font-size:16px;
   }
-  .chip .sub{color:var(--muted);font-size:14px}
-  .panelhead{
-    font-family:var(--mono);font-size:15px;letter-spacing:.08em;text-transform:uppercase;
-    color:var(--muted);margin-bottom:12px;
+  .chip .s{color:var(--dim);font-size:13px}
+  .ph{
+    font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:14px;display:flex;align-items:center;gap:10px;
   }
-  .code{
-    font-family:var(--mono);font-size:17px;line-height:1.75;color:var(--muted);
-    background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:14px 18px;
+  .src{
+    font-family:var(--mono);font-size:16px;line-height:1.85;color:var(--muted);
+    background:var(--surface-2);border:1px solid var(--line-soft);border-radius:6px;
+    padding:14px 18px;
   }
-  .code em{color:var(--text);font-style:normal}
-  .verdictbig{
-    margin-top:16px;font-family:var(--mono);font-size:27px;font-weight:600;
-    padding:13px 18px;border-radius:9px;text-align:center;
+  .src em{color:var(--text);font-style:normal}
+  .out{
+    margin-top:16px;font-family:var(--mono);font-size:25px;font-weight:600;
+    padding:14px;border-radius:6px;text-align:center;letter-spacing:.02em;
   }
 
-  /* --------------------------------------------------------- step 3 */
-  .legend{display:flex;gap:26px;align-items:center;margin-bottom:16px}
-
-  /* --------------------------------------------------------- step 4 */
-  .turns{display:flex;flex-direction:column;gap:11px}
+  /* ============================================================ step 4 */
+  .turns{display:flex;flex-direction:column;gap:9px}
   .turn{
-    display:grid;grid-template-columns:90px 210px 40px 1fr;align-items:center;gap:16px;
-    border:1.5px solid var(--line);border-radius:9px;padding:13px 18px;background:var(--panel);
-    opacity:0;transform:translateY(8px);
+    display:grid;grid-template-columns:78px 190px 26px 1fr;align-items:center;gap:18px;
+    border:1px solid var(--line);border-left-width:2px;border-radius:7px;
+    padding:13px 20px;background:var(--surface);
+    opacity:0;transform:translateY(7px);
   }
-  .turn.in{animation:rise .2s ease forwards}
-  .turn .k{font-family:var(--mono);font-size:16px;color:var(--muted)}
-  .turn .node{font-family:var(--mono);font-size:19px;font-weight:600}
-  .turn .ar{color:var(--line);font-size:20px;text-align:center}
-  .turn .val{font-family:var(--mono);font-size:18px}
-  .turn.mdl{border-style:dashed;border-color:var(--model)}
-  .turn.rul{border-color:var(--det)}
+  .turn.in{animation:rise .19s ease both}
+  .turn.mdl{border-left-color:var(--model);border-style:dashed;border-left-style:solid}
+  .turn.rul{border-left-color:var(--det)}
+  .turn .no{font-family:var(--mono);font-size:14px;color:var(--dim);letter-spacing:.1em}
+  .turn .nd{font-family:var(--mono);font-size:19px;font-weight:600}
+  .turn .ar{color:var(--line);text-align:center;font-family:var(--mono)}
+  .turn .vl{font-family:var(--mono);font-size:17px;color:var(--muted)}
+  .turn .vl b{color:var(--text);font-weight:600}
   .cf{
-    margin-top:22px;border:1.5px dashed var(--line);border-radius:9px;padding:15px 20px;
-    color:var(--muted);font-size:19px;background:var(--panel-2);
+    margin-top:20px;border:1px dashed var(--line);border-radius:7px;padding:16px 22px;
+    background:var(--surface-2);font-size:18px;color:var(--dim);line-height:1.55;
   }
-  .cf .strike{text-decoration:line-through;opacity:.55;font-family:var(--mono)}
+  .cf s{opacity:.55;font-family:var(--mono)}
 
-  /* --------------------------------------------------------- step 5 */
-  .g5{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start}
-  .email{
-    border:1.5px solid var(--line);border-radius:10px;background:var(--panel-2);padding:20px 22px;
-    font-size:19px;line-height:1.65;color:#CBD6E3;
+  /* ============================================================ step 5 */
+  .g5{display:grid;grid-template-columns:1.05fr 1fr;gap:26px;align-items:start}
+  .mail{
+    border:1px solid var(--line);border-radius:8px;background:var(--surface-2);
+    padding:20px 24px;font-size:18px;line-height:1.62;color:#C3CDDD;
   }
-  .email .from{
+  .mail .hd{
+    font-family:var(--mono);font-size:13px;color:var(--dim);letter-spacing:.06em;
+    border-bottom:1px solid var(--line-soft);padding-bottom:11px;margin-bottom:14px;
+  }
+  mark{
+    background:rgba(225,172,99,.18);color:var(--money);font-family:var(--mono);
+    padding:1px 6px;border-radius:3px;font-weight:500;
+  }
+  .stg{display:flex;flex-direction:column;gap:11px}
+  .stg .row{padding:14px 20px;border-radius:7px}
+  .stg .row .h{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .stg .row .h .nm{font-family:var(--mono);font-size:18px;font-weight:600}
+  .stg .row .b{font-family:var(--mono);font-size:16px;color:var(--muted)}
+  .stg .row .b b{color:var(--text)}
+  .acts{display:flex;gap:12px;margin-top:4px;flex-wrap:wrap}
+
+  /* ============================================================ step 6 */
+  table.cmp{border-collapse:collapse;width:100%;max-width:1180px}
+  table.cmp th,table.cmp td{text-align:left;padding:17px 24px;border-bottom:1px solid var(--line-soft)}
+  table.cmp th{
+    font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--dim);font-weight:500;border-bottom:1px solid var(--line);
+  }
+  table.cmp td{font-size:20px}
+  table.cmp td.n{font-family:var(--mono);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
+  table.cmp tr.hl{background:rgba(169,150,240,.05)}
+
+  /* ============================================================ step 7 */
+  .figs{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+  .fig{border:1px solid var(--line);border-radius:9px;background:var(--surface);padding:24px}
+  .fig.lead{border-color:var(--good);background:rgba(95,200,148,.06)}
+  .fig .k2{
+    font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);min-height:34px;
+  }
+  .fig .v{font-family:var(--mono);font-size:58px;font-weight:600;line-height:1;margin-top:14px;
+          font-variant-numeric:tabular-nums}
+  .fig .f{font-family:var(--mono);font-size:16px;color:var(--dim);margin-top:12px;line-height:1.5}
+  .fig .f s{color:var(--bad);opacity:.85}
+
+  /* ========================================================= appendix */
+  .rules{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+  .rulecol .hd{
+    font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);padding-bottom:9px;border-bottom:1px solid var(--line);margin-bottom:12px;
+    display:flex;justify-content:space-between;align-items:baseline;
+  }
+  .rulecol ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+  .rulecol li{
     font-family:var(--mono);font-size:15px;color:var(--muted);
-    border-bottom:1px solid var(--line);padding-bottom:11px;margin-bottom:14px;
+    display:grid;grid-template-columns:44px 1fr;gap:12px;line-height:1.4;
   }
-  mark{background:rgba(245,166,35,.22);color:var(--money);font-family:var(--mono);
-       padding:1px 5px;border-radius:4px;font-weight:600}
-  .stages{display:flex;flex-direction:column;gap:13px}
-  .stage-row{display:grid;grid-template-columns:1fr;gap:6px;padding:14px 18px;border-radius:9px}
-  .stage-row .h{display:flex;align-items:center;gap:12px}
-  .stage-row .h .nm{font-family:var(--mono);font-size:19px;font-weight:600}
-  .stage-row .d{font-family:var(--mono);font-size:17px;color:var(--muted)}
-  .outcome{display:flex;gap:14px;margin-top:4px;flex-wrap:wrap}
+  .rulecol li .id{color:var(--det)}
+  .rulecol li .id.mm{color:var(--money)}
+  .rulecol li .id.nn{color:var(--model)}
 
-  /* --------------------------------------------------------- step 6 */
-  table{border-collapse:collapse;width:100%;max-width:1080px}
-  th,td{text-align:left;padding:18px 22px;border-bottom:1px solid var(--line);font-size:22px}
-  th{font-family:var(--mono);font-size:15px;letter-spacing:.1em;text-transform:uppercase;
-     color:var(--muted);font-weight:500;border-bottom:1.5px solid var(--line)}
-  td.num{font-family:var(--mono);font-size:26px;font-weight:600}
-  tr.hl td{background:rgba(174,139,255,.06)}
-
-  /* --------------------------------------------------------- step 7 */
-  .figs{display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
-  .fig{border:1.5px solid var(--line);border-radius:12px;background:var(--panel);padding:26px 24px}
-  .fig .k{font-family:var(--mono);font-size:15px;letter-spacing:.08em;text-transform:uppercase;
-          color:var(--muted);margin-bottom:16px;min-height:38px}
-  .fig .v{font-family:var(--mono);font-size:60px;font-weight:700;line-height:1}
-  .fig .from{font-family:var(--mono);font-size:19px;color:var(--muted);margin-top:10px}
-  .fig .from s{opacity:.7}
+  .stack{display:grid;grid-template-columns:repeat(2,1fr);gap:26px}
+  .stack table{border-collapse:collapse;width:100%}
+  .stack td{
+    padding:9px 0;border-bottom:1px solid var(--line-soft);font-family:var(--mono);font-size:16px;
+  }
+  .stack td:first-child{color:var(--dim);width:190px}
+  .stack td:last-child{color:var(--muted)}
+  .inv{display:flex;flex-direction:column;gap:9px}
+  .inv .i{
+    display:grid;grid-template-columns:44px 1fr;gap:14px;font-size:17px;line-height:1.45;
+    color:var(--muted);
+  }
+  .inv .i .n{font-family:var(--mono);color:var(--det);font-size:15px}
+  .inv .i b{color:var(--text);font-weight:600}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="brand">NISHCHAY<span>.</span></div>
-  <div class="sep">/</div>
-  <div class="title" id="stepTitle">The problem</div>
-  <div class="clock" id="clock">0:00 – 0:18</div>
-</header>
+<nav class="spine" aria-label="Steps">
+  <div class="mark">NISHCHAY</div>
+  <div class="ticks" id="ticks"></div>
+  <div class="idx tnum" id="idx">01</div>
+</nav>
 
-<main>
-  <div class="stage">
+<div class="frame">
 
-    <!-- ============================================== 1  THE PROBLEM -->
-    <section class="step" data-title="The problem" data-clock="0:00 – 0:18">
-      <div class="anim">
-        <div class="rail">
-          <div class="railcap mono">order_A</div>
-          <div class="events">
-            <div class="ev">
+  <div class="rail">
+    <div>
+      <div class="eyebrow" id="eyebrow">Revenue recovery &middot; Track 03</div>
+      <h1 id="title">The problem</h1>
+    </div>
+    <div class="apxflag" id="apxflag" hidden>appendix &middot; not narrated</div>
+    <div class="tc">
+      <div class="win" id="win">0:00 &ndash; 0:18</div>
+      <div class="of" id="of">STEP 01 / 10</div>
+    </div>
+  </div>
+
+  <main>
+    <div class="stage">
+
+      <!-- ======================================================= 1 -->
+      <section class="step" data-t="The problem" data-w="0:00 &ndash; 0:18"
+               data-e="Revenue recovery &middot; Track 03">
+        <div class="lane">
+          <div class="who">order_A</div>
+          <div class="track">
+            <div class="node" style="left:0">
               <div class="t">+18s</div>
               <div class="n">payment.failed</div>
-              <div class="m">pay_1 &middot; low balance</div>
+              <div class="s">pay_1 &middot; error_source = bank</div>
             </div>
-            <div class="ev g">
+            <div class="node ok" style="left:380px">
               <div class="t">+47s</div>
-              <div class="n green">payment.captured</div>
-              <div class="m">pay_2 &middot; retried in PhonePe</div>
+              <div class="n g">payment.captured</div>
+              <div class="s">pay_2 &middot; retried inside PhonePe</div>
+            </div>
+            <div class="node" style="left:760px">
+              <div class="t">+51s</div>
+              <div class="n g">order.paid</div>
+              <div class="s">amount_paid = amount_due</div>
             </div>
           </div>
         </div>
 
-        <div class="arrowdown"></div>
+        <div class="verdictline">
+          <span class="lab">truth</span>
+          <span class="g">the customer paid. once. Rs&nbsp;2,340.</span>
+        </div>
 
-        <div class="chain">
-          <div class="box bad" style="padding:14px 20px">
-            <div class="lbl" style="color:var(--bad)">naive agent</div>
-            <div class="mono" style="font-size:19px;margin-top:4px">fires on payment.failed</div>
-          </div>
-          <div class="ar">&rarr;</div>
-          <div class="box bad" style="padding:14px 20px">
-            <div class="lbl" style="color:var(--bad)">creates</div>
-            <div class="mono" style="font-size:19px;margin-top:4px">order_B &middot; recovery link</div>
-          </div>
-          <div class="ar">&rarr;</div>
-          <div class="box bad" style="padding:14px 20px">
-            <div class="lbl" style="color:var(--bad)">result</div>
-            <div class="mono red" style="font-size:19px;margin-top:4px;font-weight:600">
-              customer charged twice
+        <div class="verdictline" style="margin-top:22px">
+          <span class="lab">naive agent</span>
+          <span class="r">fires on payment.failed at +18s</span>
+          <span class="d">&rarr;</span>
+          <span class="r">POST /v1/payment_links</span>
+          <span class="d">&rarr;</span>
+          <span class="r">creates <b>order_B</b></span>
+        </div>
+
+        <div class="ledger">
+          <table>
+            <tr><td class="d">order_A</td><td>Rs 2,340</td><td class="d">paid at +47s</td></tr>
+            <tr><td class="d">order_B</td><td class="r">Rs 2,340</td><td class="r">paid on the recovery link</td></tr>
+            <tr class="sum"><td class="r">charged</td><td class="r">Rs 4,680</td>
+                <td class="r">Razorpay clubs attempts <i>within</i> one order_id</td></tr>
+          </table>
+        </div>
+      </section>
+
+      <!-- ======================================================= 2 -->
+      <section class="step" data-t="Status is a fold" data-w="0:18 &ndash; 0:32"
+               data-e="core decision">
+        <div class="arrivals">
+          <span class="lab">arrival order</span>
+          <span class="chip">payment.captured <span class="s">event_time +47s &middot; received 1st</span></span>
+          <span class="chip">payment.failed <span class="s">event_time +18s &middot; received 2nd</span></span>
+          <span class="u mono" style="font-size:16px">at-least-once <b class="text">and unordered</b></span>
+        </div>
+
+        <div class="two">
+          <div class="card">
+            <div class="ph"><span class="pill">the default</span> mutable status, last write wins</div>
+            <div class="src">
+UPDATE payments SET status=<em>'captured'</em><br>
+UPDATE payments SET status=<em>'failed'</em> &nbsp;<span class="d">-- later arrival, wins</span>
             </div>
-          </div>
-        </div>
-
-        <div class="mono dim" style="margin-top:24px;margin-left:60px;font-size:17px">
-          order_A &nbsp;paid&nbsp; Rs 2,340 &nbsp;&nbsp;+&nbsp;&nbsp; order_B &nbsp;paid&nbsp; Rs 2,340
-          &nbsp;&nbsp;&mdash;&nbsp;&nbsp;
-          <span class="red">Razorpay clubs attempts within one order_id, so it cannot see this</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- ================================================== 2  THE FOLD -->
-    <section class="step" data-title="The fold" data-clock="0:18 – 0:32">
-      <div class="anim">
-        <div class="arrival">
-          <span class="lbl">delivery order</span>
-          <span class="chip">payment.captured<span class="sub">&nbsp; event_time +47s &nbsp;·&nbsp; received 1st</span></span>
-          <span class="chip">payment.failed<span class="sub">&nbsp; event_time +18s &nbsp;·&nbsp; received 2nd</span></span>
-          <span class="dim" style="font-size:17px">webhooks are at-least-once <b>and unordered</b></span>
-        </div>
-
-        <div class="cols">
-          <div class="box">
-            <div class="panelhead">mutable status &middot; last write wins</div>
-            <div class="code">
-status = <em>"captured"</em><br>
-status = <em>"failed"</em>&nbsp;&nbsp;<span class="dim">// arrived later, wins</span>
-            </div>
-            <div class="verdictbig bad red">FAILED</div>
-            <div class="dim mono" style="margin-top:12px;font-size:16px">
-              &rarr; sends a recovery link to a customer who already paid
+            <div class="out r" style="border:1px solid var(--bad);background:rgba(240,145,139,.08)">FAILED</div>
+            <div class="mono d" style="margin-top:12px;font-size:15px">
+              a recovery link goes to a customer who already paid
             </div>
           </div>
 
-          <div class="box">
-            <div class="panelhead">resolve(observations, now) &middot; pure fold</div>
-            <div class="code">
-sorted(obs, key=<em>event_time</em>)<br>
-R2_sibling_captured_full &rarr; <em>settled</em>
+          <div class="card">
+            <div class="ph"><span class="pill det">nishchay</span> resolve(observations, now)</div>
+            <div class="src">
+obs = <em>sorted(obs, key=event_time)</em><br>
+R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
             </div>
-            <div class="verdictbig good green">ORDER_SETTLED</div>
-            <div class="dim mono" style="margin-top:12px;font-size:16px">
-              &rarr; NOOP. the same set in any order gives the same answer
+            <div class="out g" style="border:1px solid var(--good);background:rgba(95,200,148,.08)">ORDER_SETTLED</div>
+            <div class="mono d" style="margin-top:12px;font-size:15px">
+              NOOP &middot; any permutation of the same set folds to the same verdict
             </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ============================================== 3  THE PIPELINE -->
-    <section class="step" data-title="The pipeline" data-clock="0:32 – 0:50">
-      <div class="anim">
-        <div class="legend">
-          <span class="tag d">solid &nbsp;=&nbsp; deterministic, zero model calls</span>
-          <span class="tag m">dashed &nbsp;=&nbsp; calls a model</span>
+      <!-- ======================================================= 3 -->
+      <section class="step" data-t="The pipeline" data-w="0:32 &ndash; 0:50"
+               data-e="control flow">
+        <div style="display:flex;gap:24px;margin-bottom:14px">
+          <span class="pill det">solid &middot; deterministic, zero model calls</span>
+          <span class="pill mdl">dashed &middot; calls a model</span>
+          <span class="pill mny">amber &middot; moves money</span>
         </div>
 
-        <svg viewBox="0 0 1600 400" style="width:100%;height:auto">
+        <div class="scroll">
+        <svg viewBox="0 0 1640 372" style="width:100%;height:auto;min-width:1180px"
+             role="img" aria-label="Pipeline: ingress, triage, resolver, verdict branch, strategist, gate, executor">
           <defs>
-            <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3"
-                    orient="auto" markerUnits="strokeWidth">
-              <path d="M0,0 L0,6 L8,3 z" fill="#26313F"/>
-            </marker>
-            <marker id="ahm" markerWidth="9" markerHeight="9" refX="8" refY="3"
-                    orient="auto" markerUnits="strokeWidth">
-              <path d="M0,0 L0,6 L8,3 z" fill="#AE8BFF"/>
-            </marker>
+            <marker id="a" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#223047"/></marker>
+            <marker id="am" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#A996F0"/></marker>
           </defs>
+          <g font-family="IBM Plex Mono,monospace">
 
-          <!-- row 1 -->
-          <g font-family="ui-monospace,Menlo,monospace">
-            <rect x="8" y="150" width="176" height="66" rx="9"
-                  fill="rgba(51,149,255,.07)" stroke="#3395FF" stroke-width="1.5"/>
-            <text x="96" y="180" fill="#E8EEF5" font-size="20" font-weight="600" text-anchor="middle">ingress</text>
-            <text x="96" y="202" fill="#8FA0B4" font-size="14" text-anchor="middle">verify · append</text>
+            <rect x="4" y="152" width="158" height="64" rx="7"
+                  fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="83" y="181" fill="#E6ECF7" font-size="19" font-weight="600" text-anchor="middle">ingress</text>
+            <text x="83" y="202" fill="#5D6980" font-size="13" text-anchor="middle">HMAC · dedupe · append</text>
 
-            <line x1="192" y1="183" x2="238" y2="183" stroke="#26313F" stroke-width="2" marker-end="url(#ah)"/>
+            <line x1="170" y1="184" x2="208" y2="184" stroke="#223047" stroke-width="1.5" marker-end="url(#a)"/>
 
-            <rect x="246" y="150" width="160" height="66" rx="9"
-                  fill="rgba(51,149,255,.07)" stroke="#3395FF" stroke-width="1.5"/>
-            <text x="326" y="180" fill="#E8EEF5" font-size="20" font-weight="600" text-anchor="middle">triage</text>
-            <text x="326" y="202" fill="#8FA0B4" font-size="14" text-anchor="middle">pure, no I/O</text>
+            <rect x="216" y="152" width="140" height="64" rx="7"
+                  fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="286" y="181" fill="#E6ECF7" font-size="19" font-weight="600" text-anchor="middle">triage</text>
+            <text x="286" y="202" fill="#5D6980" font-size="13" text-anchor="middle">pure · no I/O</text>
 
-            <line x1="414" y1="183" x2="460" y2="183" stroke="#26313F" stroke-width="2" marker-end="url(#ah)"/>
+            <line x1="364" y1="184" x2="402" y2="184" stroke="#223047" stroke-width="1.5" marker-end="url(#a)"/>
 
-            <rect x="468" y="150" width="190" height="66" rx="9"
-                  fill="rgba(174,139,255,.07)" stroke="#AE8BFF" stroke-width="1.5" stroke-dasharray="7 5"/>
-            <text x="563" y="180" fill="#E8EEF5" font-size="20" font-weight="600" text-anchor="middle">RESOLVER</text>
-            <text x="563" y="202" fill="#AE8BFF" font-size="14" text-anchor="middle">agent 1</text>
+            <rect x="410" y="152" width="178" height="64" rx="7"
+                  fill="rgba(169,150,240,.06)" stroke="#A996F0" stroke-dasharray="6 4"/>
+            <text x="499" y="181" fill="#E6ECF7" font-size="19" font-weight="600" text-anchor="middle">RESOLVER</text>
+            <text x="499" y="202" fill="#A996F0" font-size="13" text-anchor="middle">what is true?</text>
 
-            <line x1="666" y1="183" x2="706" y2="183" stroke="#26313F" stroke-width="2" marker-end="url(#ah)"/>
+            <line x1="596" y1="184" x2="630" y2="184" stroke="#223047" stroke-width="1.5" marker-end="url(#a)"/>
 
-            <!-- verdict branch -->
-            <rect x="714" y="146" width="150" height="74" rx="9"
-                  fill="#0F151D" stroke="#26313F" stroke-width="1.5"/>
-            <text x="789" y="177" fill="#E8EEF5" font-size="19" font-weight="600" text-anchor="middle">verdict</text>
-            <text x="789" y="199" fill="#8FA0B4" font-size="14" text-anchor="middle">6 outcomes</text>
-          </g>
+            <rect x="638" y="148" width="136" height="72" rx="7" fill="#0C1420" stroke="#223047"/>
+            <text x="706" y="177" fill="#E6ECF7" font-size="18" font-weight="600" text-anchor="middle">verdict</text>
+            <text x="706" y="198" fill="#5D6980" font-size="13" text-anchor="middle">6 outcomes</text>
 
-          <!-- branch up: CONFIRMED_FAILED -> strategist -->
-          <path d="M864,168 C920,168 920,74 976,74" fill="none"
-                stroke="#AE8BFF" stroke-width="2" marker-end="url(#ahm)"/>
-          <text x="884" y="104" fill="#AE8BFF" font-size="14"
-                font-family="ui-monospace,Menlo,monospace">CONFIRMED_FAILED</text>
-          <text x="884" y="124" fill="#8FA0B4" font-size="13"
-                font-family="ui-monospace,Menlo,monospace">only this one</text>
+            <path d="M774,168 C838,168 838,66 902,66" fill="none" stroke="#A996F0"
+                  stroke-width="1.5" marker-end="url(#am)"/>
+            <text x="792" y="96" fill="#A996F0" font-size="13">CONFIRMED_FAILED</text>
+            <text x="792" y="116" fill="#5D6980" font-size="12">this verdict only</text>
 
-          <rect x="984" y="41" width="204" height="66" rx="9"
-                fill="rgba(174,139,255,.07)" stroke="#AE8BFF" stroke-width="1.5" stroke-dasharray="7 5"/>
-          <text x="1086" y="71" fill="#E8EEF5" font-size="20" font-weight="600"
-                text-anchor="middle" font-family="ui-monospace,Menlo,monospace">STRATEGIST</text>
-          <text x="1086" y="93" fill="#AE8BFF" font-size="14" text-anchor="middle"
-                font-family="ui-monospace,Menlo,monospace">agent 2</text>
+            <rect x="910" y="34" width="196" height="64" rx="7"
+                  fill="rgba(169,150,240,.06)" stroke="#A996F0" stroke-dasharray="6 4"/>
+            <text x="1008" y="63" fill="#E6ECF7" font-size="19" font-weight="600" text-anchor="middle">STRATEGIST</text>
+            <text x="1008" y="84" fill="#A996F0" font-size="13" text-anchor="middle">what should we do?</text>
 
-          <path d="M1188,74 C1244,74 1244,168 1300,168" fill="none"
-                stroke="#26313F" stroke-width="2" marker-end="url(#ah)"/>
+            <path d="M1106,66 C1170,66 1170,168 1234,168" fill="none" stroke="#223047"
+                  stroke-width="1.5" marker-end="url(#a)"/>
 
-          <!-- branch straight: every other verdict -> gate -->
-          <path d="M864,198 L1300,198" fill="none" stroke="#26313F" stroke-width="2" marker-end="url(#ah)"/>
-          <text x="1000" y="222" fill="#8FA0B4" font-size="14"
-                font-family="ui-monospace,Menlo,monospace">every other verdict &mdash; strategist never runs</text>
+            <path d="M774,200 L1234,200" fill="none" stroke="#223047" stroke-width="1.5" marker-end="url(#a)"/>
+            <text x="866" y="223" fill="#5D6980" font-size="13">
+              ORDER_SETTLED · UNCAPTURED_AUTH · PENDING_TAT · DUPLICATE_RISK · UNRESOLVED
+            </text>
+            <text x="866" y="243" fill="#5D6980" font-size="13">the strategist is unreachable from all five</text>
 
-          <!-- branch down: PENDING_TAT -> scheduler -->
-          <path d="M789,220 L789,306 L640,306" fill="none" stroke="#26313F" stroke-width="2" marker-end="url(#ah)"/>
-          <text x="800" y="290" fill="#8FA0B4" font-size="14"
-                font-family="ui-monospace,Menlo,monospace">PENDING_TAT</text>
-          <rect x="430" y="276" width="204" height="60" rx="9"
-                fill="rgba(51,149,255,.07)" stroke="#3395FF" stroke-width="1.5"/>
-          <text x="532" y="303" fill="#E8EEF5" font-size="19" font-weight="600"
-                text-anchor="middle" font-family="ui-monospace,Menlo,monospace">scheduler</text>
-          <text x="532" y="323" fill="#8FA0B4" font-size="13" text-anchor="middle"
-                font-family="ui-monospace,Menlo,monospace">re-fold at a new now</text>
-          <path d="M430,306 L300,306 L300,224" fill="none" stroke="#26313F" stroke-width="2"
-                stroke-dasharray="5 5" marker-end="url(#ah)"/>
+            <path d="M706,220 L706,304 L586,304" fill="none" stroke="#223047" stroke-width="1.5" marker-end="url(#a)"/>
+            <text x="716" y="290" fill="#5D6980" font-size="13">PENDING_TAT</text>
+            <rect x="386" y="276" width="196" height="56" rx="7"
+                  fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="484" y="300" fill="#E6ECF7" font-size="18" font-weight="600" text-anchor="middle">scheduler</text>
+            <text x="484" y="320" fill="#5D6980" font-size="12" text-anchor="middle">re-fold at a later now</text>
+            <path d="M386,304 L286,304 L286,224" fill="none" stroke="#223047" stroke-width="1.5"
+                  stroke-dasharray="4 4" marker-end="url(#a)"/>
 
-          <!-- gate + executor -->
-          <g font-family="ui-monospace,Menlo,monospace">
-            <rect x="1308" y="146" width="130" height="74" rx="9"
-                  fill="rgba(51,149,255,.07)" stroke="#3395FF" stroke-width="2.5"/>
-            <text x="1373" y="177" fill="#E8EEF5" font-size="20" font-weight="700" text-anchor="middle">gate</text>
-            <text x="1373" y="199" fill="#8FA0B4" font-size="14" text-anchor="middle">14 rules</text>
+            <rect x="1242" y="146" width="140" height="76" rx="7"
+                  fill="rgba(51,149,255,.08)" stroke="#3395FF" stroke-width="2.5"/>
+            <text x="1312" y="176" fill="#E6ECF7" font-size="20" font-weight="700" text-anchor="middle">gate</text>
+            <text x="1312" y="197" fill="#5D6980" font-size="13" text-anchor="middle">14 rules</text>
+            <text x="1312" y="214" fill="#5D6980" font-size="12" text-anchor="middle">re-derives all</text>
 
-            <line x1="1446" y1="183" x2="1486" y2="183" stroke="#26313F" stroke-width="2" marker-end="url(#ah)"/>
+            <line x1="1390" y1="184" x2="1424" y2="184" stroke="#223047" stroke-width="1.5" marker-end="url(#a)"/>
 
-            <rect x="1494" y="146" width="100" height="74" rx="9"
-                  fill="rgba(245,166,35,.08)" stroke="#F5A623" stroke-width="1.5"/>
-            <text x="1544" y="177" fill="#E8EEF5" font-size="18" font-weight="600" text-anchor="middle">executor</text>
-            <text x="1544" y="199" fill="#F5A623" font-size="13" text-anchor="middle">money</text>
+            <rect x="1432" y="146" width="126" height="76" rx="7"
+                  fill="rgba(225,172,99,.07)" stroke="#E1AC63"/>
+            <text x="1495" y="176" fill="#E6ECF7" font-size="18" font-weight="600" text-anchor="middle">executor</text>
+            <text x="1495" y="197" fill="#E1AC63" font-size="13" text-anchor="middle">capture</text>
+            <text x="1495" y="214" fill="#E1AC63" font-size="13" text-anchor="middle">link · refund</text>
           </g>
         </svg>
-
-        <div class="mono dim" style="margin-top:10px;font-size:17px">
-          the gate reads the event store, never the model&rsquo;s output &nbsp;·&nbsp;
-          the executor is reachable from nowhere else
         </div>
-      </div>
-    </section>
 
-    <!-- ================================================ 4  THE AGENCY -->
-    <section class="step" data-title="The agency" data-clock="0:50 – 1:10">
-      <div class="anim">
+        <div class="mono d" style="margin-top:8px;font-size:16px">
+          the gate reads the event store, never the model&rsquo;s output &nbsp;&middot;&nbsp;
+          the executor is reachable from nowhere else in the codebase
+        </div>
+      </section>
+
+      <!-- ======================================================= 4 -->
+      <section class="step" data-t="Where the agency is" data-w="0:50 &ndash; 1:10"
+               data-e="strategist · scenario E">
         <div class="turns" id="turns">
-          <div class="turn mdl">
-            <div class="k">turn 1</div><div class="node violet">assess</div><div class="ar">&rarr;</div>
-            <div class="val">probe <b>downtime</b> &mdash; is a bank out?</div>
-          </div>
-          <div class="turn rul">
-            <div class="k">turn 2</div><div class="node blue">downtime</div><div class="ar">&rarr;</div>
-            <div class="val">HDFC netbanking &nbsp;·&nbsp; scope = <b class="amber">METHOD</b></div>
-          </div>
-          <div class="turn mdl">
-            <div class="k">turn 3</div><div class="node violet">assess</div><div class="ar">&rarr;</div>
-            <div class="val">scoped, so another rail exists &rarr; probe <b>history</b></div>
-          </div>
-          <div class="turn rul">
-            <div class="k">turn 4</div><div class="node blue">history</div><div class="ar">&rarr;</div>
-            <div class="val">this customer paid by <b>UPI</b> twice before</div>
-          </div>
-          <div class="turn mdl">
-            <div class="k">turn 5</div><div class="node violet">compose</div><div class="ar">&rarr;</div>
-            <div class="val"><b class="amber">RCV_UPI_ALT</b> over WhatsApp &nbsp;·&nbsp; method_hint = upi</div>
-          </div>
+          <div class="turn mdl"><div class="no">TURN 1</div><div class="nd m">assess</div><div class="ar">&rarr;</div>
+            <div class="vl">probe <b>downtime</b> &mdash; is a bank out right now?</div></div>
+          <div class="turn rul"><div class="no">TURN 2</div><div class="nd k">downtime</div><div class="ar">&rarr;</div>
+            <div class="vl">HDFC netbanking &middot; severity high &middot; scope = <b class="y">METHOD</b></div></div>
+          <div class="turn mdl"><div class="no">TURN 3</div><div class="nd m">assess</div><div class="ar">&rarr;</div>
+            <div class="vl">scoped, so another rail exists &rarr; probe <b>history</b></div></div>
+          <div class="turn rul"><div class="no">TURN 4</div><div class="nd k">history</div><div class="ar">&rarr;</div>
+            <div class="vl">this customer settled by <b>UPI</b> twice before</div></div>
+          <div class="turn mdl"><div class="no">TURN 5</div><div class="nd m">compose</div><div class="ar">&rarr;</div>
+            <div class="vl"><b class="y">RCV_UPI_ALT</b> &middot; method_hint=upi &middot; DLT 1207162458392017002</div></div>
         </div>
 
-        <div class="cf anim" style="animation-delay:.78s">
-          counterfactual &mdash; if turn 2 had returned scope = <b class="mono">BANK_WIDE</b>:
-          &nbsp;<span class="strike">turn 3</span> &nbsp;<span class="strike">turn 4</span>&nbsp;
-          never happen. There is no alternative rail to steer to, so the strategist
-          composes <span class="mono amber">RCV_DOWNTIME_WAIT</span> &mdash; tell them to wait,
-          send no link.
+        <div class="cf">
+          <b class="u">Counterfactual.</b> Had turn 2 returned scope = <span class="mono">BANK_WIDE</span>,
+          <s>turn 3</s> and <s>turn 4</s> never execute &mdash; there is no alternative rail to steer
+          onto, so the graph composes <span class="mono y">RCV_DOWNTIME_WAIT</span>: tell them they
+          were not charged, send no link, schedule a recheck.
+          <span class="d">Same code, different shape, because turn 2 answered differently.</span>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ============================================== 5  SCENARIO G -->
-    <section class="step" data-title="Model extracts, rules decide" data-clock="1:10 – 1:30">
-      <div class="anim">
+      <!-- ======================================================= 5 -->
+      <section class="step" data-t="Model extracts, rules decide" data-w="1:10 &ndash; 1:30"
+               data-e="scenario G · unstructured evidence">
         <div class="g5">
-          <div class="email">
-            <div class="from">from: customer &nbsp;·&nbsp; support inbox &nbsp;·&nbsp; not a webhook</div>
+          <div class="mail">
+            <div class="hd">support inbox &middot; arrives outside the webhook stream &middot; untrusted</div>
             hi team, i tried paying 2340 on 23/01 for my order but it showed failed.
             but money IS deducted from my hdfc account. checked statement, the ref no is
             <mark>2309-0149-5295</mark> and amount 2340 debited. please refund or confirm,
             i dont want to pay again and get charged twice.
           </div>
 
-          <div class="stages">
-            <div class="stage-row box model">
-              <div class="h"><span class="tag m">model</span><span class="nm violet">interpret</span></div>
-              <div class="d">CustomerClaim(debited=<b>true</b>, ref="2309-0149-5295", amount=234000)</div>
+          <div class="stg">
+            <div class="row card mdl">
+              <div class="h"><span class="pill mdl">model</span><span class="nm m">interpret</span></div>
+              <div class="b">CustomerClaim(debited=<b>true</b>, ref=<b>"2309-0149-5295"</b>, amount=234000)</div>
             </div>
-            <div class="stage-row box det">
-              <div class="h"><span class="tag d">rule</span><span class="nm blue">assess_claim</span></div>
-              <div class="d">normalise &rarr; <b>230901495295</b> &nbsp;==&nbsp; payment RRN &nbsp;&rarr;&nbsp;
-                <b class="green">CONFIRMS</b></div>
+            <div class="row card det">
+              <div class="h"><span class="pill det">rule</span><span class="nm k">assess_claim</span></div>
+              <div class="b">strip separators &rarr; <b>230901495295</b> &nbsp;==&nbsp; acquirer RRN
+                &rarr; <b class="g">CONFIRMS</b></div>
             </div>
-            <div class="stage-row box good">
-              <div class="h"><span class="tag d">fold</span><span class="nm green">R10b</span></div>
-              <div class="d">UNRESOLVED @ 0.45 &nbsp;&rarr;&nbsp; <b>DUPLICATE_RISK @ 0.90</b> &rarr; HOLD</div>
+            <div class="row card good">
+              <div class="h"><span class="pill det">fold</span><span class="nm g">R10b</span></div>
+              <div class="b">UNRESOLVED @ 0.45 &nbsp;&rarr;&nbsp; <b>DUPLICATE_RISK @ 0.90</b> &rarr; HOLD</div>
             </div>
-
-            <div class="outcome">
-              <div class="box bad" style="padding:12px 18px">
-                <div class="mono red" style="font-size:18px;font-weight:600">recovery link BLOCKED</div>
-              </div>
-              <div class="box money" style="padding:12px 18px">
-                <div class="mono amber" style="font-size:18px;font-weight:600">
-                  dispute filed &nbsp;·&nbsp; both RRN forms attached
-                </div>
-              </div>
+            <div class="acts">
+              <div class="card bad" style="padding:11px 18px">
+                <span class="mono r" style="font-size:17px;font-weight:600">recovery link BLOCKED</span></div>
+              <div class="card mny" style="padding:11px 18px">
+                <span class="mono y" style="font-size:17px;font-weight:600">dispute filed &middot; both RRN forms</span></div>
             </div>
           </div>
         </div>
 
-        <div class="mono dim" style="margin-top:20px;font-size:17px">
-          the model never sees the RRN comparison &mdash; it only reports what the customer said.
-          a hallucinated reference fails the match and lowers confidence, which fails the gate floor.
+        <div class="mono d" style="margin-top:18px;font-size:16px">
+          the model never performs the comparison &mdash; it reports what the customer said.
+          a hallucinated reference fails the match, lowers confidence, and fails the gate floor.
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ======================================= 6  WHAT THE MODEL IS WORTH -->
-    <section class="step" data-title="What the model is worth" data-clock="1:30 – 1:45">
-      <div class="anim">
-        <table>
+      <!-- ======================================================= 6 -->
+      <section class="step" data-t="What the model is worth" data-w="1:30 &ndash; 1:45"
+               data-e="measured, not asserted">
+        <div class="scroll">
+        <table class="cmp">
+          <tr><th>configuration</th><th>verdicts</th><th>llm calls</th>
+              <th>duplicate orders</th><th>false positives</th></tr>
           <tr>
-            <th>configuration</th><th>verdicts correct</th><th>llm calls</th><th>duplicate orders</th>
-          </tr>
-          <tr>
-            <td>rules only &nbsp;<span class="tag d">deterministic</span></td>
-            <td class="num">6/7</td>
-            <td class="num dim">0</td>
-            <td class="num green">0</td>
+            <td>rules only &nbsp;<span class="pill det">deterministic</span></td>
+            <td class="n">6 / 7</td><td class="n d">0</td>
+            <td class="n g">0</td><td class="n g">0</td>
           </tr>
           <tr class="hl">
-            <td>with agents &nbsp;<span class="tag m">resolver + strategist</span></td>
-            <td class="num green">7/7</td>
-            <td class="num violet">20</td>
-            <td class="num green">0</td>
+            <td>with agents &nbsp;<span class="pill mdl">resolver + strategist</span></td>
+            <td class="n g">7 / 7</td><td class="n m">20</td>
+            <td class="n g">0</td><td class="n g">0</td>
           </tr>
         </table>
-
-        <div style="margin-top:26px;font-size:21px;max-width:1100px;line-height:1.6">
-          The agents change the <b>verdict</b> on one scenario &mdash; G, where the evidence is
-          a customer&rsquo;s prose and nothing else can read it. They change the
-          <b>intervention</b> on one more &mdash; E, where a method-scoped outage means steer to
-          UPI rather than retry the broken rail.
-          <span class="dim">Everything else the rules already had.</span>
         </div>
 
-        <div class="mono dim" style="margin-top:20px;font-size:17px">
-          duplicate orders stay at zero in <b>both</b> columns &mdash; the safety property does not
-          depend on the model being available, which is why degradation is survivable.
+        <div style="margin-top:26px;font-size:20px;max-width:1140px;line-height:1.6;color:var(--muted)">
+          The agents change the <b style="color:var(--text)">verdict</b> on one scenario &mdash; G,
+          where the only evidence is a customer&rsquo;s prose and nothing deterministic can read it.
+          They change the <b style="color:var(--text)">intervention</b> on one more &mdash; E, where a
+          method-scoped outage means steer to UPI rather than retry a rail that is down.
         </div>
-      </div>
-    </section>
 
-    <!-- ================================================== 7  RESULTS -->
-    <section class="step" data-title="Results" data-clock="1:45 – 2:00">
-      <div class="anim">
+        <div class="mono d" style="margin-top:20px;font-size:16px">
+          duplicate orders and false positives stay at zero in <b class="u">both</b> rows &mdash;
+          the safety property does not depend on a provider answering, which is why degradation is survivable.
+        </div>
+      </section>
+
+      <!-- ======================================================= 7 -->
+      <section class="step" data-t="Results" data-w="1:45 &ndash; 2:00" data-e="measured on 7 labelled scenarios">
         <div class="figs">
-          <div class="fig">
-            <div class="k">duplicate orders created</div>
-            <div class="v green">0</div>
-            <div class="from">baseline agent <s class="red">2</s></div>
+          <div class="fig lead">
+            <div class="k2">duplicate orders created</div>
+            <div class="v g">0</div>
+            <div class="f">baseline agent <s>2</s></div>
+          </div>
+          <div class="fig lead">
+            <div class="k2">money double-charged</div>
+            <div class="v g">Rs 0</div>
+            <div class="f">baseline agent <s>Rs 4,680</s></div>
           </div>
           <div class="fig">
-            <div class="k">money double-charged</div>
-            <div class="v green">Rs 0</div>
-            <div class="from">baseline agent <s class="red">Rs 4,680</s></div>
+            <div class="k2">chaos faults handled</div>
+            <div class="v k">9 / 9</div>
+            <div class="f">duplicate webhooks, inverted delivery,<br>dead fetchers, 429 storms, secret rotation</div>
           </div>
           <div class="fig">
-            <div class="k">chaos faults handled</div>
-            <div class="v blue">9/9</div>
-            <div class="from">duplicate webhooks, inverted<br>delivery, dead fetchers, 429 storms</div>
-          </div>
-          <div class="fig">
-            <div class="k">tests passing</div>
-            <div class="v blue">205</div>
-            <div class="from">7/7 verdicts &nbsp;·&nbsp; 0 false positives</div>
+            <div class="k2">tests passing</div>
+            <div class="v k">205</div>
+            <div class="f">7/7 verdicts &middot; 0 false positives<br>ScriptedLLM &mdash; never the network</div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
+      <!-- ================================================ 8 appendix -->
+      <section class="step" data-t="Full topology" data-w="not narrated" data-e="appendix" data-apx="1">
+        <div class="scroll">
+        <svg viewBox="0 0 1640 400" style="width:100%;height:auto;min-width:1200px"
+             role="img" aria-label="Full system topology across edge, transport, compute, state and external tiers">
+          <defs>
+            <marker id="b" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#223047"/></marker>
+          </defs>
+          <g font-family="IBM Plex Mono,monospace">
+            <line x1="150" y1="8" x2="150" y2="392" stroke="#1A2536"/>
+            <text x="12" y="52" fill="#5D6980" font-size="12" letter-spacing="2">EDGE</text>
+            <text x="12" y="140" fill="#5D6980" font-size="12" letter-spacing="2">COMPUTE</text>
+            <text x="12" y="258" fill="#5D6980" font-size="12" letter-spacing="2">STATE</text>
+            <text x="12" y="352" fill="#5D6980" font-size="12" letter-spacing="2">EXTERNAL</text>
+
+            <rect x="170" y="24" width="210" height="52" rx="6" fill="#0C1420" stroke="#223047"/>
+            <text x="275" y="47" fill="#E6ECF7" font-size="16" text-anchor="middle">Razorpay</text>
+            <text x="275" y="65" fill="#5D6980" font-size="12" text-anchor="middle">7 webhook events</text>
+
+            <rect x="412" y="24" width="200" height="52" rx="6" fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="512" y="47" fill="#E6ECF7" font-size="16" text-anchor="middle">ingress :8000</text>
+            <text x="512" y="65" fill="#5D6980" font-size="12" text-anchor="middle">FastAPI · HMAC SHA256</text>
+
+            <rect x="644" y="24" width="196" height="52" rx="6" fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="742" y="47" fill="#E6ECF7" font-size="16" text-anchor="middle">Redpanda</text>
+            <text x="742" y="65" fill="#5D6980" font-size="12" text-anchor="middle">key = order_id</text>
+
+            <rect x="872" y="24" width="196" height="52" rx="6" fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="970" y="47" fill="#E6ECF7" font-size="16" text-anchor="middle">worker</text>
+            <text x="970" y="65" fill="#5D6980" font-size="12" text-anchor="middle">per-order lock</text>
+
+            <rect x="1100" y="24" width="240" height="52" rx="6" fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="1220" y="47" fill="#E6ECF7" font-size="16" text-anchor="middle">console :8080</text>
+            <text x="1220" y="65" fill="#5D6980" font-size="12" text-anchor="middle">FastAPI · SSE · 6 screens</text>
+
+            <line x1="380" y1="50" x2="404" y2="50" stroke="#223047" stroke-width="1.5" marker-end="url(#b)"/>
+            <line x1="612" y1="50" x2="636" y2="50" stroke="#223047" stroke-width="1.5" marker-end="url(#b)"/>
+            <line x1="840" y1="50" x2="864" y2="50" stroke="#223047" stroke-width="1.5" marker-end="url(#b)"/>
+
+            <rect x="170" y="112" width="164" height="86" rx="6" fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="252" y="140" fill="#E6ECF7" font-size="16" text-anchor="middle">triage</text>
+            <text x="252" y="160" fill="#5D6980" font-size="12" text-anchor="middle">FOLD_ONLY</text>
+            <text x="252" y="177" fill="#5D6980" font-size="12" text-anchor="middle">AMBIGUOUS</text>
+            <text x="252" y="192" fill="#5D6980" font-size="12" text-anchor="middle">IGNORE</text>
+
+            <rect x="356" y="112" width="200" height="86" rx="6"
+                  fill="rgba(169,150,240,.06)" stroke="#A996F0" stroke-dasharray="6 4"/>
+            <text x="456" y="138" fill="#E6ECF7" font-size="16" text-anchor="middle">resolver</text>
+            <text x="456" y="158" fill="#A996F0" font-size="11" text-anchor="middle">LangGraph · 6 nodes</text>
+            <text x="456" y="176" fill="#5D6980" font-size="11" text-anchor="middle">precheck plan fetch</text>
+            <text x="456" y="191" fill="#5D6980" font-size="11" text-anchor="middle">interpret analyze narrate</text>
+
+            <rect x="578" y="112" width="200" height="86" rx="6"
+                  fill="rgba(169,150,240,.06)" stroke="#A996F0" stroke-dasharray="6 4"/>
+            <text x="678" y="138" fill="#E6ECF7" font-size="16" text-anchor="middle">strategist</text>
+            <text x="678" y="158" fill="#A996F0" font-size="11" text-anchor="middle">LangGraph · 4 nodes</text>
+            <text x="678" y="176" fill="#5D6980" font-size="11" text-anchor="middle">assess downtime</text>
+            <text x="678" y="191" fill="#5D6980" font-size="11" text-anchor="middle">history compose</text>
+
+            <rect x="800" y="112" width="164" height="86" rx="6"
+                  fill="rgba(51,149,255,.08)" stroke="#3395FF" stroke-width="2.5"/>
+            <text x="882" y="140" fill="#E6ECF7" font-size="16" font-weight="600" text-anchor="middle">gate</text>
+            <text x="882" y="160" fill="#5D6980" font-size="12" text-anchor="middle">14 veto rules</text>
+            <text x="882" y="178" fill="#5D6980" font-size="12" text-anchor="middle">re-derives from</text>
+            <text x="882" y="193" fill="#5D6980" font-size="12" text-anchor="middle">the event store</text>
+
+            <rect x="986" y="112" width="164" height="86" rx="6" fill="rgba(225,172,99,.07)" stroke="#E1AC63"/>
+            <text x="1068" y="140" fill="#E6ECF7" font-size="16" text-anchor="middle">executor</text>
+            <text x="1068" y="160" fill="#E1AC63" font-size="12" text-anchor="middle">idempotent</text>
+            <text x="1068" y="178" fill="#5D6980" font-size="11" text-anchor="middle">sha256(pay|action</text>
+            <text x="1068" y="193" fill="#5D6980" font-size="11" text-anchor="middle">|evidence_version)</text>
+
+            <rect x="1172" y="112" width="168" height="86" rx="6" fill="rgba(51,149,255,.06)" stroke="#3395FF"/>
+            <text x="1256" y="140" fill="#E6ECF7" font-size="16" text-anchor="middle">scheduler</text>
+            <text x="1256" y="160" fill="#5D6980" font-size="12" text-anchor="middle">Redis zset</text>
+            <text x="1256" y="178" fill="#5D6980" font-size="12" text-anchor="middle">banking-day</text>
+            <text x="1256" y="193" fill="#5D6980" font-size="12" text-anchor="middle">recheck</text>
+
+            <rect x="170" y="232" width="230" height="66" rx="6" fill="#0C1420" stroke="#223047"/>
+            <text x="285" y="257" fill="#E6ECF7" font-size="15" text-anchor="middle">Postgres · observations</text>
+            <text x="285" y="276" fill="#5D6980" font-size="12" text-anchor="middle">APPEND-ONLY, trigger-enforced</text>
+            <text x="285" y="291" fill="#5D6980" font-size="12" text-anchor="middle">UNIQUE(order_id, event_id)</text>
+
+            <rect x="424" y="232" width="212" height="66" rx="6" fill="#0C1420" stroke="#223047"/>
+            <text x="530" y="257" fill="#E6ECF7" font-size="15" text-anchor="middle">Redis</text>
+            <text x="530" y="276" fill="#5D6980" font-size="12" text-anchor="middle">dedupe claims · order locks</text>
+            <text x="530" y="291" fill="#5D6980" font-size="12" text-anchor="middle">recheck queue</text>
+
+            <rect x="660" y="232" width="212" height="66" rx="6" fill="#0C1420" stroke="#223047"/>
+            <text x="766" y="257" fill="#E6ECF7" font-size="15" text-anchor="middle">ClickHouse</text>
+            <text x="766" y="276" fill="#5D6980" font-size="12" text-anchor="middle">outcomes · veto log</text>
+            <text x="766" y="291" fill="#5D6980" font-size="12" text-anchor="middle">matrix.sql</text>
+
+            <rect x="896" y="232" width="212" height="66" rx="6" fill="#0C1420" stroke="#223047"/>
+            <text x="1002" y="257" fill="#E6ECF7" font-size="15" text-anchor="middle">LangGraph checkpointer</text>
+            <text x="1002" y="276" fill="#5D6980" font-size="12" text-anchor="middle">AsyncPostgresSaver</text>
+            <text x="1002" y="291" fill="#5D6980" font-size="12" text-anchor="middle">resumes a killed graph</text>
+
+            <rect x="424" y="330" width="212" height="52" rx="6" fill="rgba(225,172,99,.07)" stroke="#E1AC63"/>
+            <text x="530" y="352" fill="#E6ECF7" font-size="15" text-anchor="middle">Razorpay API</text>
+            <text x="530" y="370" fill="#5D6980" font-size="12" text-anchor="middle">capture · link · refund</text>
+
+            <rect x="660" y="330" width="212" height="52" rx="6" fill="rgba(225,172,99,.07)" stroke="#E1AC63"/>
+            <text x="766" y="352" fill="#E6ECF7" font-size="15" text-anchor="middle">Meta WhatsApp</text>
+            <text x="766" y="370" fill="#5D6980" font-size="12" text-anchor="middle">Cloud API · DLT templates</text>
+
+            <rect x="896" y="330" width="212" height="52" rx="6"
+                  fill="rgba(169,150,240,.06)" stroke="#A996F0" stroke-dasharray="6 4"/>
+            <text x="1002" y="352" fill="#E6ECF7" font-size="15" text-anchor="middle">Gemini · Anthropic</text>
+            <text x="1002" y="370" fill="#5D6980" font-size="12" text-anchor="middle">FallbackLLM chain</text>
+
+            <line x1="1068" y1="198" x2="1068" y2="324" stroke="#223047" stroke-width="1.5"
+                  stroke-dasharray="4 4" marker-end="url(#b)"/>
+          </g>
+        </svg>
+        </div>
+      </section>
+
+      <!-- ================================================ 9 appendix -->
+      <section class="step" data-t="The decision ladder" data-w="not narrated"
+               data-e="appendix · fold rules, verdicts, gate" data-apx="1">
+        <div class="rules">
+          <div class="rulecol">
+            <div class="hd"><span>fold rules &mdash; priority order</span><span class="k">16</span></div>
+            <ul>
+              <li><span class="id">R1</span><span>settlement report is ground truth</span></li>
+              <li><span class="id">R2</span><span>sibling captured in full &middot; scenario A</span></li>
+              <li><span class="id">R3</span><span>order.paid</span></li>
+              <li><span class="id">R4</span><span>two captures &mdash; already double-charged</span></li>
+              <li><span class="id">R5</span><span>authorised, never captured</span></li>
+              <li><span class="id">R6</span><span>refund processed &middot; debit reversed</span></li>
+              <li><span class="id">R7</span><span>refund failed &mdash; money stranded</span></li>
+              <li><span class="id">R8</span><span>no terminal evidence yet</span></li>
+              <li><span class="id">R9</span><span>customer-attributable &middot; RBI test</span></li>
+              <li><span class="id">R9b</span><span>merchant config rejected it</span></li>
+              <li><span class="id">R10</span><span>active outage at a pre-debit step</span></li>
+              <li><span class="id">R10b</span><span>customer confirms a debit</span></li>
+              <li><span class="id">R10c</span><span>quoted reference belongs elsewhere</span></li>
+              <li><span class="id">R11</span><span>inside T+1 &mdash; wait</span></li>
+              <li><span class="id">R12</span><span>T+1 expired, post-debit</span></li>
+              <li><span class="id">R15</span><span>insufficient evidence &rarr; escalate</span></li>
+            </ul>
+          </div>
+
+          <div class="rulecol">
+            <div class="hd"><span>verdict &rarr; proposed action</span><span class="k">6</span></div>
+            <ul>
+              <li><span class="id">01</span><span><b class="g">ORDER_SETTLED</b> &rarr; NOOP</span></li>
+              <li><span class="id">02</span><span><b>CONFIRMED_FAILED</b> &rarr; SEND_RECOVERY_LINK</span></li>
+              <li><span class="id">03</span><span><b>UNCAPTURED_AUTH</b> &rarr; CAPTURE</span></li>
+              <li><span class="id">04</span><span><b>PENDING_TAT</b> &rarr; NOOP + recheck</span></li>
+              <li><span class="id">05</span><span><b class="y">DUPLICATE_RISK</b> &rarr; HOLD</span></li>
+              <li><span class="id">06</span><span><b>UNRESOLVED</b> &rarr; ESCALATE</span></li>
+            </ul>
+
+            <div class="hd" style="margin-top:26px">
+              <span>confidence floor by irreversibility</span><span class="y">7</span></div>
+            <ul>
+              <li><span class="id mm">0.00</span><span>NOOP &middot; ESCALATE &middot; HOLD</span></li>
+              <li><span class="id mm">0.60</span><span>NOTIFY_MERCHANT</span></li>
+              <li><span class="id mm">0.80</span><span>CAPTURE</span></li>
+              <li><span class="id mm">0.85</span><span>VOICE_CALL</span></li>
+              <li><span class="id mm">0.90</span><span>SEND_RECOVERY_LINK</span></li>
+              <li><span class="id mm">0.95</span><span>REFUND &mdash; hardest to undo</span></li>
+            </ul>
+          </div>
+
+          <div class="rulecol">
+            <div class="hd"><span>gate vetoes</span><span class="k">14</span></div>
+            <ul>
+              <li><span class="id">state</span><span>VERDICT &middot; SETTLED &middot; TAT</span></li>
+              <li><span class="id"></span><span>CAPTURE &middot; REFUND</span></li>
+              <li><span class="id">conf</span><span>FLOOR &middot; I7 re-derived</span></li>
+              <li><span class="id">compl</span><span>DLT &middot; TCCCPR &middot; DND</span></li>
+              <li><span class="id"></span><span>CONSENT &middot; HOURS &middot; OPT_OUT</span></li>
+              <li><span class="id nn">live</span><span><b class="m">RECOVERY_CHAIN</b></span></li>
+              <li><span class="id nn">live</span><span><b class="m">UNREACHABLE</b></span></li>
+            </ul>
+
+            <div class="hd" style="margin-top:26px">
+              <span>found by running, not reading</span><span class="m">2</span></div>
+            <div style="font-size:16px;line-height:1.55;color:var(--muted)">
+              <b class="m">RECOVERY_CHAIN</b> &mdash; a recovery link&rsquo;s own failure produced
+              another link. <span class="mono">source_order</span> was written into every link and
+              never read back, so one debt accumulated orders without bound: the exposure this
+              system exists to close, caused by the system.
+              <div style="margin-top:12px">
+                <b class="m">UNREACHABLE</b> &mdash; a channel with no destination reported
+                <span class="mono">EXECUTED</span> while the message reached nobody.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =============================================== 10 appendix -->
+      <section class="step" data-t="Stack and guarantees" data-w="not narrated"
+               data-e="appendix" data-apx="1">
+        <div class="stack">
+          <div>
+            <div class="lab" style="margin-bottom:14px">runtime</div>
+            <table>
+              <tr><td>language</td><td>Python 3.12 &middot; strict schemas at every boundary</td></tr>
+              <tr><td>services</td><td>FastAPI &times; 3 &mdash; ingress, console, worker loop</td></tr>
+              <tr><td>agents</td><td>LangGraph &mdash; resolver 6 nodes, strategist 4</td></tr>
+              <tr><td>transport</td><td>Redpanda &middot; Kafka API &middot; key = order_id</td></tr>
+              <tr><td>event store</td><td>Postgres &middot; append-only, trigger-enforced</td></tr>
+              <tr><td>hot state</td><td>Redis &middot; dedupe, per-order locks, recheck zset</td></tr>
+              <tr><td>analytics</td><td>ClickHouse &middot; outcomes and the veto log</td></tr>
+              <tr><td>model</td><td>Gemini &rarr; Anthropic &middot; FallbackLLM chain</td></tr>
+              <tr><td>delivery</td><td>Meta WhatsApp Cloud API &middot; DLT templates</td></tr>
+              <tr><td>deploy</td><td>one <span class="mono">docker compose up</span> &middot; 7 containers</td></tr>
+            </table>
+          </div>
+
+          <div>
+            <div class="lab" style="margin-bottom:14px">invariants the code enforces</div>
+            <div class="inv">
+              <div class="i"><span class="n">I2</span><span>Observations are <b>immutable</b>. An append-only
+                trigger rejects UPDATE and DELETE at the database, not in application code.</span></div>
+              <div class="i"><span class="n">I3</span><span>A recovery link creates a <b>new order</b>. The gate
+                blocks one while any sibling on the source order is non-terminal.</span></div>
+              <div class="i"><span class="n">I4</span><span>Status is <b>never stored</b>. It is
+                <span class="mono">resolve(observations, now)</span> &mdash; a pure, order-independent fold.</span></div>
+              <div class="i"><span class="n">I5</span><span>Degradation biases toward <b>inaction</b>. Missing
+                evidence lowers confidence, which fails a floor, which yields NOOP.</span></div>
+              <div class="i"><span class="n">I7</span><span>Money-moving actions are checked against the gate&rsquo;s
+                <b>own re-derived</b> confidence, never the model&rsquo;s claim.</span></div>
+              <div class="i"><span class="n">I8</span><span>The gate <b>trusts no field the model produced</b>.
+                Every precondition is re-derived from the event store.</span></div>
+              <div class="i"><span class="n">E11</span><span>All money is <b>int paise</b>. Floats are rejected at
+                the schema boundary, never rounded.</span></div>
+              <div class="i"><span class="n">E20</span><span>Global webhook dedupe on
+                <span class="mono">X-Razorpay-Event-Id</span>, claimed atomically in Redis.</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <div class="base">
+    <div class="caption" id="caption"></div>
+    <div class="controls">
+      <span class="hint">&rarr; space &middot; r resets</span>
+      <button class="next" id="next" type="button">Next</button>
+    </div>
   </div>
-</main>
 
-<footer>
-  <div class="caption" id="caption"></div>
-  <div class="dots" id="dots"></div>
-  <div class="keys">&rarr; / space &nbsp;·&nbsp; r resets</div>
-  <button id="nextBtn" class="nextbtn">Next &rarr;</button>
-</footer>
+</div>
 
 <script>
 (function () {
   "use strict";
 
-  var CAPTIONS = [
-    '<b>payment.failed is not terminal.</b> Razorpay&rsquo;s own docs list in-app UPI retry and late authorisation. A recovery link creates a <b>NEW order</b> — and Razorpay&rsquo;s duplicate protection is scoped to one <code>order_id</code>.',
-    'Status is not a stored field. It is a <b>pure fold over an append-only log</b>, sorted by Razorpay&rsquo;s <code>event_time</code>. Order-independent, replayable, testable.',
-    'Five deterministic services, one deterministic orchestrator, two agents. <b>The model cannot route itself into existence</b> — the strategist is reachable from exactly one verdict.',
-    'Turn 2&rsquo;s answer determines whether turn 3 <b>exists</b>. That conditional branch is the agency claim — not a longer prompt, a different graph.',
-    '<b>The model extracts or selects. The rules decide.</b> Reading prose is a language problem; adjudicating a reference number against a payment is not.',
-    '<b>Measured, not asserted.</b> This is what the agents are worth — and what the system still does without them.',
-    'Every point where money moves is decided by a rule, and <b>re-derived a second time</b> by a gate that reads none of the model&rsquo;s output.'
+  var CAPS = [
+    '<b>payment.failed is not terminal.</b> Razorpay documents in-app UPI retry and late authorisation. A recovery link creates a <b>new order</b> &mdash; and duplicate clubbing is scoped to one <code>order_id</code>, so nothing in the payment stack can see the second charge.',
+    'Status is not a stored field. It is a <b>pure fold over an append-only log</b>, ordered by Razorpay&rsquo;s <code>event_time</code> rather than arrival. Order-independent, replayable, and testable as a property.',
+    'Five deterministic services, one deterministic orchestrator, two agents. <b>The model cannot route itself into existence</b> &mdash; the strategist is reachable from exactly one verdict out of six.',
+    'Turn 2&rsquo;s answer decides whether turn 3 <b>exists</b>. That conditional branch is the agency claim &mdash; not a longer prompt, a different graph.',
+    '<b>The model extracts. The rules decide.</b> Reading prose is a language problem; adjudicating a reference number against an acquirer RRN is not.',
+    '<b>Measured, not asserted.</b> What the agents are worth, and what the system still guarantees without them.',
+    'Every point where money moves is decided by a rule, then <b>re-derived a second time</b> by a gate that reads none of the model&rsquo;s output.',
+    'Seven containers, one <code>docker compose up</code>. Postgres holds the log, Redis holds the claims and locks, ClickHouse holds the audit trail. <b>The executor is reachable from nowhere but the gate.</b>',
+    'Sixteen fold rules in priority order, six verdicts, fourteen gate vetoes. <b>Two of the vetoes were found by running the system against live payments</b>, not by reading the spec.',
+    'The invariants are enforced where they cannot be bypassed &mdash; an append-only trigger in the database, <code>int</code> paise at the schema boundary, and a gate that re-derives rather than trusts.'
   ];
 
-  var steps   = Array.prototype.slice.call(document.querySelectorAll('.step'));
-  var titleEl = document.getElementById('stepTitle');
-  var clockEl = document.getElementById('clock');
-  var capEl   = document.getElementById('caption');
-  var dotsEl  = document.getElementById('dots');
+  var steps = [].slice.call(document.querySelectorAll('.step'));
+  var ticksEl = document.getElementById('ticks');
+  var els = {
+    title: document.getElementById('title'),
+    eyebrow: document.getElementById('eyebrow'),
+    win: document.getElementById('win'),
+    of: document.getElementById('of'),
+    idx: document.getElementById('idx'),
+    cap: document.getElementById('caption'),
+    apx: document.getElementById('apxflag')
+  };
   var i = 0;
 
-  steps.forEach(function (_, n) {
-    var d = document.createElement('div');
-    d.className = 'dot';
-    d.addEventListener('click', function () { go(n); });
-    dotsEl.appendChild(d);
+  steps.forEach(function (s, n) {
+    var b = document.createElement('button');
+    b.className = 'tick' + (s.dataset.apx ? ' apx' : '');
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Step ' + (n + 1) + ': ' + s.dataset.t);
+    b.addEventListener('click', function () { go(n); });
+    ticksEl.appendChild(b);
   });
-  var dots = Array.prototype.slice.call(dotsEl.children);
+  var ticks = [].slice.call(ticksEl.children);
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
 
   function staggerTurns() {
-    var turns = document.querySelectorAll('#turns .turn');
-    Array.prototype.forEach.call(turns, function (t, n) {
+    var ts = document.querySelectorAll('#turns .turn');
+    [].forEach.call(ts, function (t, n) {
       t.classList.remove('in');
-      // reflow so the animation restarts on re-entry
       void t.offsetWidth;
-      t.style.animationDelay = (n * 0.13) + 's';
+      t.style.animationDelay = (n * 0.11) + 's';
       t.classList.add('in');
     });
   }
 
   function go(n) {
     i = Math.max(0, Math.min(steps.length - 1, n));
-    steps.forEach(function (s, k) { s.classList.toggle('show', k === i); });
-    dots.forEach(function (d, k) { d.classList.toggle('on', k === i); });
-
     var cur = steps[i];
-    titleEl.textContent = cur.dataset.title;
-    clockEl.textContent = cur.dataset.clock;
-    capEl.innerHTML = CAPTIONS[i];
 
-    if (i === 3) { staggerTurns(); }
+    steps.forEach(function (s, k) { s.classList.toggle('show', k === i); });
+    ticks.forEach(function (t, k) { t.classList.toggle('on', k === i); });
+
+    els.title.textContent = cur.dataset.t;
+    els.eyebrow.innerHTML = cur.dataset.e;
+    els.win.innerHTML = cur.dataset.w;
+    els.of.textContent = 'STEP ' + pad(i + 1) + ' / ' + pad(steps.length);
+    els.idx.textContent = pad(i + 1);
+    els.cap.innerHTML = CAPS[i];
+    els.apx.hidden = !cur.dataset.apx;
+
+    if (cur.querySelector('#turns')) { staggerTurns(); }
   }
 
   function next() { if (i < steps.length - 1) { go(i + 1); } }
@@ -648,12 +994,12 @@ R2_sibling_captured_full &rarr; <em>settled</em>
     }
   });
 
-  document.getElementById('nextBtn').addEventListener('click', function (e) {
+  document.getElementById('next').addEventListener('click', function (e) {
     e.stopPropagation(); next();
   });
 
   document.addEventListener('click', function (e) {
-    if (e.target.closest('.dot') || e.target.closest('.nextbtn')) { return; }
+    if (e.target.closest('.tick') || e.target.closest('.next')) { return; }
     next();
   });
 
