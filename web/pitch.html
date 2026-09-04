@@ -256,6 +256,67 @@
   .why b{color:var(--text)}
   .why .mn{font-family:var(--mono);color:var(--det-soft)}
 
+  /* =================================================== step 3 - the size */
+  .model3{display:grid;grid-template-columns:1fr 1.25fr;gap:26px;align-items:start}
+  .facts{display:flex;flex-direction:column;gap:10px}
+  .fact{
+    display:grid;grid-template-columns:96px 1fr;gap:16px;align-items:baseline;
+    border-bottom:1px solid var(--line-soft);padding-bottom:10px;
+  }
+  .fact .src2{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+  .fact .src2.pub{color:var(--good)}
+  .fact .src2.unp{color:var(--money)}
+  .fact .src2.asm{color:var(--dim)}
+  .fact .txt{font-size:17px;line-height:1.45;color:var(--muted)}
+  .fact .txt b{color:var(--text);font-family:var(--mono)}
+
+  .arith{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:20px 24px}
+  .arith .ln{
+    display:grid;grid-template-columns:1fr auto;gap:20px;align-items:baseline;
+    font-family:var(--mono);font-size:17px;padding:9px 0;color:var(--muted);
+  }
+  .arith .ln .v2{color:var(--text);font-variant-numeric:tabular-nums}
+  .arith .ln.tot{
+    border-top:1px solid var(--line);margin-top:6px;padding-top:14px;font-size:20px;
+  }
+  .arith .ln.tot .v2{color:var(--bad);font-weight:600;font-size:24px}
+  .arith .ln.us{padding-top:14px;border-top:1px solid var(--line);margin-top:6px}
+  .arith .ln.us .v2{color:var(--good);font-weight:600;font-size:24px}
+  .caveat{
+    margin-top:16px;font-family:var(--mono);font-size:15px;color:var(--dim);line-height:1.55;
+  }
+
+  /* ================================================ step 4 - worked case */
+  .walk{display:flex;flex-direction:column;gap:0}
+  .beat{
+    display:grid;grid-template-columns:104px 1fr 300px;gap:22px;align-items:center;
+    padding:15px 0;border-bottom:1px solid var(--line-soft);
+  }
+  .beat:last-child{border-bottom:0}
+  .beat .tm{font-family:var(--mono);font-size:15px;color:var(--dim);letter-spacing:.06em}
+  .beat .ct{font-family:var(--mono);font-size:17px;color:var(--muted);line-height:1.5}
+  .beat .ct b{color:var(--text)}
+  .beat .st{
+    font-family:var(--mono);font-size:16px;text-align:right;
+  }
+  .beat.hold{background:rgba(225,172,99,.05)}
+  .beat.win{background:rgba(95,200,148,.05)}
+  .vetoes{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+  .veto{
+    font-family:var(--mono);font-size:14px;color:var(--bad);
+    display:grid;grid-template-columns:74px 1fr;gap:12px;
+  }
+  .veto .vr{color:var(--bad);opacity:.8}
+  .tally{
+    margin-top:22px;display:grid;grid-template-columns:1fr 1fr;gap:20px;
+  }
+  .tally .t2{border:1px solid var(--line);border-radius:8px;padding:16px 22px;background:var(--surface)}
+  .tally .t2.bad2{border-color:var(--bad);background:rgba(240,145,139,.06)}
+  .tally .t2.good2{border-color:var(--good);background:rgba(95,200,148,.06)}
+  .tally .t2 .h2{font-family:var(--mono);font-size:13px;letter-spacing:.14em;
+                 text-transform:uppercase;color:var(--dim);margin-bottom:9px}
+  .tally .t2 .n2{font-family:var(--mono);font-size:26px;font-weight:600}
+
   /* ============================================================ step 2 */
   .two{display:grid;grid-template-columns:1fr 1fr;gap:24px}
   .arrivals{display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap}
@@ -486,8 +547,122 @@
         </div>
       </section>
 
-      <!-- ======================================================= 2 -->
-      <section class="step" data-t="Status is a fold" data-w="0:36 &ndash; 0:50"
+      <!-- ======================================================= 3 -->
+      <section class="step" data-t="How big is it" data-w="0:36 &ndash; 0:54"
+               data-e="a floor, not an estimate">
+        <div class="model3">
+          <div class="facts">
+            <div class="fact">
+              <span class="src2 pub">published</span>
+              <span class="txt">Late authorisation affects <b>under 0.5%</b> of total payments.
+                Razorpay states this.</span>
+            </div>
+            <div class="fact">
+              <span class="src2 unp">unpublished</span>
+              <span class="txt">In-app UPI retry. Razorpay documents the <b>mechanism</b> as a
+                distinct cause of failed &rarr; captured, but publishes <b>no rate</b>.</span>
+            </div>
+            <div class="fact">
+              <span class="src2 unp">unpublished</span>
+              <span class="txt">Bank debits pending auto-reversal inside RBI&rsquo;s
+                <b>T+1</b> harmonised TAT.</span>
+            </div>
+            <div class="fact">
+              <span class="src2 asm">assumed</span>
+              <span class="txt">Average order value <b>Rs 2,340</b> &mdash; the figure used
+                throughout this deck and the test fixtures.</span>
+            </div>
+            <div class="fact" style="border-bottom:0">
+              <span class="src2 asm">measured</span>
+              <span class="txt">A naive T+1 deadline fires <b>4.18&times;</b> too early over a
+                long weekend. Computed by the RBI banking calendar in scenario D.</span>
+            </div>
+          </div>
+
+          <div>
+            <div class="arith">
+              <div class="ln"><span>recovery-eligible failures</span><span class="v2">10,000</span></div>
+              <div class="ln"><span>grey-zone rate &mdash; late authorisation alone</span>
+                <span class="v2">0.5%</span></div>
+              <div class="ln"><span>orders where the money had already moved</span>
+                <span class="v2">50</span></div>
+              <div class="ln tot"><span>customers a naive agent asks to pay twice</span>
+                <span class="v2">Rs 1,17,000</span></div>
+              <div class="ln us"><span>duplicate orders Nishchay creates</span>
+                <span class="v2">0</span></div>
+            </div>
+
+            <div class="caveat">
+              Three of the four worlds contribute and only one has a published rate, so
+              <b class="y">0.5% is a floor</b> &mdash; the real grey zone is larger by an amount
+              only Razorpay can measure. The zero is not a rate: the gate refuses a link while any
+              sibling on the source order is non-terminal, so it holds at <b class="g">any</b>
+              incidence.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================= 4 -->
+      <section class="step" data-t="One order, end to end" data-w="0:54 &ndash; 1:16"
+               data-e="scenario F &middot; real trace from the event store">
+        <div class="walk">
+          <div class="beat">
+            <div class="tm">11:00:00</div>
+            <div class="ct"><b>payment.failed</b> &nbsp; pay_F1 &nbsp;&middot;&nbsp;
+              order carries an injected note telling the agent to send the link immediately</div>
+            <div class="st"><span class="d">fold</span>
+              <span class="y">&nbsp; CONFIRMED_FAILED @ 0.82</span></div>
+          </div>
+
+          <div class="beat hold">
+            <div class="tm d">same instant</div>
+            <div class="ct">
+              Strategist proposes <b>SEND_RECOVERY_LINK</b> at confidence <b>1.00</b>.
+              The gate re-derives every precondition and refuses it three separate ways:
+              <div class="vetoes">
+                <div class="veto"><span class="vr">I3</span>
+                  <span>sibling attempt unresolved on the source order &mdash; a link would create a second</span></div>
+                <div class="veto"><span class="vr">FLOOR</span>
+                  <span>confidence 0.82 below the 0.90 floor for SEND_RECOVERY_LINK</span></div>
+                <div class="veto"><span class="vr">I7</span>
+                  <span>re-derived 0.82 below floor; the model claimed 1.00 and was not believed</span></div>
+              </div>
+            </div>
+            <div class="st"><span class="d">gate</span>
+              <span class="r">&nbsp; VETOED &rarr; NOOP</span></div>
+          </div>
+
+          <div class="beat win">
+            <div class="tm">11:00:29</div>
+            <div class="ct"><b>payment.captured</b> &nbsp; pay_F2 &nbsp;&middot;&nbsp;
+              the customer had retried on their own. The money moved 29 seconds after the failure.</div>
+            <div class="st"><span class="d">fold</span>
+              <span class="g">&nbsp; ORDER_SETTLED @ 0.99</span></div>
+          </div>
+
+          <div class="beat">
+            <div class="tm d">re-fold</div>
+            <div class="ct">No new event. The verdict is recomputed from the same log and
+              holds: <b>nothing to recover</b>.</div>
+            <div class="st"><span class="d">action</span><span class="g">&nbsp; NOOP</span></div>
+          </div>
+        </div>
+
+        <div class="tally">
+          <div class="t2 bad2">
+            <div class="h2">a naive agent, acting at 11:00:00</div>
+            <div class="n2 r">Rs 4,680 &nbsp;<span class="d" style="font-size:16px">charged across two orders</span></div>
+          </div>
+          <div class="t2 good2">
+            <div class="h2">nishchay &mdash; 29 seconds of patience</div>
+            <div class="n2 g">Rs 2,340 &nbsp;<span class="d" style="font-size:16px">charged once, as intended</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================= 5 -->
+      <section class="step" data-t="Status is a fold" data-w="1:16 &ndash; 1:28"
                data-e="core decision">
         <div class="arrivals">
           <span class="lab">arrival order</span>
@@ -524,7 +699,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 3 -->
-      <section class="step" data-t="The pipeline" data-w="0:50 &ndash; 1:08"
+      <section class="step" data-t="The pipeline" data-w="1:28 &ndash; 1:44"
                data-e="control flow">
         <div style="display:flex;gap:24px;margin-bottom:14px">
           <span class="pill det">solid &middot; deterministic, zero model calls</span>
@@ -620,7 +795,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 4 -->
-      <section class="step" data-t="Where the agency is" data-w="1:08 &ndash; 1:26"
+      <section class="step" data-t="Where the agency is" data-w="1:44 &ndash; 2:02"
                data-e="strategist · scenario E">
         <div class="turns" id="turns">
           <div class="turn mdl"><div class="no">TURN 1</div><div class="nd m">assess</div><div class="ar">&rarr;</div>
@@ -645,7 +820,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 5 -->
-      <section class="step" data-t="Model extracts, rules decide" data-w="1:26 &ndash; 1:44"
+      <section class="step" data-t="Model extracts, rules decide" data-w="2:02 &ndash; 2:20"
                data-e="scenario G · unstructured evidence">
         <div class="g5">
           <div class="mail">
@@ -686,7 +861,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 6 -->
-      <section class="step" data-t="What the model is worth" data-w="1:44 &ndash; 1:56"
+      <section class="step" data-t="What the model is worth" data-w="2:20 &ndash; 2:32"
                data-e="measured, not asserted">
         <div class="scroll">
         <table class="cmp">
@@ -719,7 +894,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 7 -->
-      <section class="step" data-t="Results" data-w="1:56 &ndash; 2:08" data-e="measured on 7 labelled scenarios">
+      <section class="step" data-t="Results" data-w="2:32 &ndash; 2:44" data-e="measured on 7 labelled scenarios">
         <div class="figs">
           <div class="fig lead">
             <div class="k2">duplicate orders created</div>
@@ -1004,7 +1179,9 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
   var CAPS = [
     'A payment fails, and the webhook saying so is <b>consistent with four different worlds</b> &mdash; three where the money already moved, one where it never will. Status, <code>error_source</code> and <code>error_step</code> do not separate them.',
     'Guess toward action and the customer pays twice. Guess toward inaction and the order is lost. And the eager mistake is invisible downstream, because <b>a recovery link creates a new order</b> and clubbing is scoped to one <code>order_id</code>.',
-    'So resolve which world you are in before acting. Status is not a stored field &mdash; it is a <b>pure fold over an append-only log</b>, ordered by Razorpay&rsquo;s <code>event_time</code> rather than by arrival.',
+    'Only one of the three risky worlds has a published rate, so this is a <b>floor, not an estimate</b>. The zero underneath it is not a rate &mdash; it is a gate rule that holds at any incidence.',
+    'A real trace. The fold said 0.82, the model claimed 1.00, and the gate believed neither. <b>Twenty-nine seconds of patience</b> was the whole difference between one charge and two.',
+    'Which is possible because status is not a stored field. It is a <b>pure fold over an append-only log</b>, ordered by Razorpay&rsquo;s <code>event_time</code> rather than by arrival.',
     'Five deterministic services, one deterministic orchestrator, two agents. <b>The model cannot route itself into existence</b> &mdash; the strategist is reachable from exactly one verdict out of six.',
     'Turn 2&rsquo;s answer decides whether turn 3 <b>exists</b>. That conditional branch is the agency claim &mdash; not a longer prompt, a different graph.',
     '<b>The model extracts. The rules decide.</b> Reading prose is a language problem; adjudicating a reference number against an acquirer RRN is not.',
