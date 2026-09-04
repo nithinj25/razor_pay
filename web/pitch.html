@@ -204,6 +204,58 @@
   .ledger td{padding:5px 26px 5px 0}
   .ledger tr.sum td{border-top:1px solid var(--bad);padding-top:9px;font-weight:600}
 
+  /* ================================================= step 1 - grey zone */
+  .oneev{
+    display:flex;align-items:center;gap:20px;margin-bottom:26px;
+    border:1px solid var(--line);border-left:3px solid var(--money);
+    border-radius:7px;background:var(--surface);padding:16px 24px;
+  }
+  .oneev .ev{font-family:var(--mono);font-size:23px;font-weight:600}
+  .oneev .meta{font-family:var(--mono);font-size:15px;color:var(--dim);line-height:1.5}
+  .oneev .ask{
+    margin-left:auto;text-align:right;font-family:var(--mono);font-size:16px;color:var(--money);
+  }
+  .worlds{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  .world{
+    border:1px solid var(--line);border-radius:8px;background:var(--surface-2);
+    padding:16px 18px;display:flex;flex-direction:column;gap:9px;
+  }
+  .world .wh{
+    font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);display:flex;justify-content:space-between;align-items:baseline;
+  }
+  .world .wt{font-size:17px;line-height:1.42;color:var(--text)}
+  .world .wm{
+    font-family:var(--mono);font-size:14px;padding-top:9px;margin-top:auto;
+    border-top:1px solid var(--line-soft);display:flex;justify-content:space-between;
+  }
+  .world.moved{border-left:3px solid var(--good)}
+  .world.nomoved{border-left:3px solid var(--bad)}
+  .same{
+    margin-top:22px;font-family:var(--mono);font-size:17px;color:var(--money);
+    display:flex;align-items:center;gap:14px;
+  }
+  .same .bar{height:1px;background:var(--money);opacity:.4;flex:1}
+
+  /* ================================================== step 2 - the cost */
+  .costs{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  .cost{border:1px solid var(--bad);border-radius:8px;background:rgba(240,145,139,.05);padding:20px 24px}
+  .cost .ch{
+    font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--bad);margin-bottom:14px;
+  }
+  .cost .cl{font-size:19px;line-height:1.5;color:var(--muted);margin-bottom:14px}
+  .cost .cl b{color:var(--text)}
+  .cost .fig2{font-family:var(--mono);font-size:32px;font-weight:600;color:var(--bad)}
+  .cost .sub{font-family:var(--mono);font-size:15px;color:var(--dim);margin-top:8px;line-height:1.5}
+  .why{
+    margin-top:24px;border:1px solid var(--line);border-left:3px solid var(--det);
+    border-radius:7px;background:var(--surface);padding:18px 24px;
+    font-size:19px;line-height:1.55;color:var(--muted);
+  }
+  .why b{color:var(--text)}
+  .why .mn{font-family:var(--mono);color:var(--det-soft)}
+
   /* ============================================================ step 2 */
   .two{display:grid;grid-template-columns:1fr 1fr;gap:24px}
   .arrivals{display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap}
@@ -353,55 +405,89 @@
     <div class="stage">
 
       <!-- ======================================================= 1 -->
-      <section class="step" data-t="The problem" data-w="0:00 &ndash; 0:18"
+      <section class="step" data-t="The grey zone" data-w="0:00 &ndash; 0:20"
                data-e="Revenue recovery &middot; Track 03">
-        <div class="lane">
-          <div class="who">order_A</div>
-          <div class="track">
-            <div class="node" style="left:0">
-              <div class="t">+18s</div>
-              <div class="n">payment.failed</div>
-              <div class="s">pay_1 &middot; error_source = bank</div>
-            </div>
-            <div class="node ok" style="left:380px">
-              <div class="t">+47s</div>
-              <div class="n g">payment.captured</div>
-              <div class="s">pay_2 &middot; retried inside PhonePe</div>
-            </div>
-            <div class="node" style="left:760px">
-              <div class="t">+51s</div>
-              <div class="n g">order.paid</div>
-              <div class="s">amount_paid = amount_due</div>
-            </div>
+        <div class="oneev">
+          <div>
+            <div class="ev y">payment.failed</div>
+            <div class="meta">order_A &middot; pay_1 &middot; +18s &middot;
+              error_source=bank &middot; error_step=payment_response</div>
+          </div>
+          <div class="ask">one webhook &mdash; consistent with<br>all four worlds below</div>
+        </div>
+
+        <div class="worlds">
+          <div class="world moved">
+            <div class="wh"><span>world 1</span><span class="g">money moved</span></div>
+            <div class="wt">The customer retried inside PhonePe and <b>succeeded at +47s</b>.
+              Razorpay documents this as its own cause of failed &rarr; captured.</div>
+            <div class="wm"><span class="d">correct action</span><span class="g">do nothing</span></div>
+          </div>
+
+          <div class="world moved">
+            <div class="wh"><span>world 2</span><span class="g">money moved</span></div>
+            <div class="wt">A <b>late authorisation</b> is in flight. Bank-to-Razorpay comms
+              broke; the payment authorises minutes later.</div>
+            <div class="wm"><span class="d">Razorpay: under 0.5%</span><span class="g">wait</span></div>
+          </div>
+
+          <div class="world moved">
+            <div class="wh"><span>world 3</span><span class="g">money moved</span></div>
+            <div class="wt">The bank <b>debited and will auto-reverse</b> inside RBI&rsquo;s
+              harmonised TAT, with compensation, on its own.</div>
+            <div class="wm"><span class="d">T+1 banking days</span><span class="g">wait</span></div>
+          </div>
+
+          <div class="world nomoved">
+            <div class="wh"><span>world 4</span><span class="r">no debit</span></div>
+            <div class="wt">It <b>genuinely failed</b>. Nothing left the account and nothing
+              will. This order is lost unless somebody acts on it.</div>
+            <div class="wm"><span class="d">correct action</span><span class="y">recover</span></div>
           </div>
         </div>
 
-        <div class="verdictline">
-          <span class="lab">truth</span>
-          <span class="g">the customer paid. once. Rs&nbsp;2,340.</span>
-        </div>
-
-        <div class="verdictline" style="margin-top:22px">
-          <span class="lab">naive agent</span>
-          <span class="r">fires on payment.failed at +18s</span>
-          <span class="d">&rarr;</span>
-          <span class="r">POST /v1/payment_links</span>
-          <span class="d">&rarr;</span>
-          <span class="r">creates <b>order_B</b></span>
-        </div>
-
-        <div class="ledger">
-          <table>
-            <tr><td class="d">order_A</td><td>Rs 2,340</td><td class="d">paid at +47s</td></tr>
-            <tr><td class="d">order_B</td><td class="r">Rs 2,340</td><td class="r">paid on the recovery link</td></tr>
-            <tr class="sum"><td class="r">charged</td><td class="r">Rs 4,680</td>
-                <td class="r">Razorpay clubs attempts <i>within</i> one order_id</td></tr>
-          </table>
+        <div class="same">
+          <span>the payload is identical in all four &mdash; status, error_source and error_step do not separate them</span>
+          <span class="bar"></span>
+          <span class="d">the grey zone</span>
         </div>
       </section>
 
       <!-- ======================================================= 2 -->
-      <section class="step" data-t="Status is a fold" data-w="0:18 &ndash; 0:32"
+      <section class="step" data-t="Both directions cost money" data-w="0:20 &ndash; 0:36"
+               data-e="why guessing is not an option">
+        <div class="costs">
+          <div class="cost">
+            <div class="ch">guess &ldquo;it failed&rdquo; &middot; act too early</div>
+            <div class="cl">Send a recovery link into worlds 1, 2 or 3 and the customer,
+              already debited, <b>pays a second time</b>.</div>
+            <div class="fig2">Rs 2,340 &times; 2 = Rs 4,680</div>
+            <div class="sub">order_A paid at +47s &nbsp;&middot;&nbsp; order_B paid on the link<br>
+              a refund, a dispute, and a customer who does not return</div>
+          </div>
+
+          <div class="cost">
+            <div class="ch">guess &ldquo;it is fine&rdquo; &middot; act late, or never</div>
+            <div class="cl">Sit through world 4 and the order is simply lost. Authorised-but-uncaptured
+              payments are <b>auto-refunded at three days</b>.</div>
+            <div class="fig2">recoverable revenue, forfeited</div>
+            <div class="sub">the failure the merchant could have converted<br>
+              and money already authorised, handed back</div>
+          </div>
+        </div>
+
+        <div class="why">
+          The eager mistake cannot be caught downstream. A recovery link is
+          <span class="mn">POST /v1/payment_links</span>, which creates a <b>new order</b> &mdash;
+          and Razorpay&rsquo;s duplicate protection clubs attempts <b>within</b> one
+          <span class="mn">order_id</span>. order_B is a different order, so nothing in the payment
+          stack can see that the two charges are one debt.
+          <b>Only the agent about to create order_B is in a position to know.</b>
+        </div>
+      </section>
+
+      <!-- ======================================================= 2 -->
+      <section class="step" data-t="Status is a fold" data-w="0:36 &ndash; 0:50"
                data-e="core decision">
         <div class="arrivals">
           <span class="lab">arrival order</span>
@@ -438,7 +524,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 3 -->
-      <section class="step" data-t="The pipeline" data-w="0:32 &ndash; 0:50"
+      <section class="step" data-t="The pipeline" data-w="0:50 &ndash; 1:08"
                data-e="control flow">
         <div style="display:flex;gap:24px;margin-bottom:14px">
           <span class="pill det">solid &middot; deterministic, zero model calls</span>
@@ -534,7 +620,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 4 -->
-      <section class="step" data-t="Where the agency is" data-w="0:50 &ndash; 1:10"
+      <section class="step" data-t="Where the agency is" data-w="1:08 &ndash; 1:26"
                data-e="strategist · scenario E">
         <div class="turns" id="turns">
           <div class="turn mdl"><div class="no">TURN 1</div><div class="nd m">assess</div><div class="ar">&rarr;</div>
@@ -559,7 +645,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 5 -->
-      <section class="step" data-t="Model extracts, rules decide" data-w="1:10 &ndash; 1:30"
+      <section class="step" data-t="Model extracts, rules decide" data-w="1:26 &ndash; 1:44"
                data-e="scenario G · unstructured evidence">
         <div class="g5">
           <div class="mail">
@@ -600,7 +686,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 6 -->
-      <section class="step" data-t="What the model is worth" data-w="1:30 &ndash; 1:45"
+      <section class="step" data-t="What the model is worth" data-w="1:44 &ndash; 1:56"
                data-e="measured, not asserted">
         <div class="scroll">
         <table class="cmp">
@@ -633,7 +719,7 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
       </section>
 
       <!-- ======================================================= 7 -->
-      <section class="step" data-t="Results" data-w="1:45 &ndash; 2:00" data-e="measured on 7 labelled scenarios">
+      <section class="step" data-t="Results" data-w="1:56 &ndash; 2:08" data-e="measured on 7 labelled scenarios">
         <div class="figs">
           <div class="fig lead">
             <div class="k2">duplicate orders created</div>
@@ -916,8 +1002,9 @@ R2_sibling_captured_full &rarr; <em>ORDER_SETTLED</em>
   "use strict";
 
   var CAPS = [
-    '<b>payment.failed is not terminal.</b> Razorpay documents in-app UPI retry and late authorisation. A recovery link creates a <b>new order</b> &mdash; and duplicate clubbing is scoped to one <code>order_id</code>, so nothing in the payment stack can see the second charge.',
-    'Status is not a stored field. It is a <b>pure fold over an append-only log</b>, ordered by Razorpay&rsquo;s <code>event_time</code> rather than arrival. Order-independent, replayable, and testable as a property.',
+    'A payment fails, and the webhook saying so is <b>consistent with four different worlds</b> &mdash; three where the money already moved, one where it never will. Status, <code>error_source</code> and <code>error_step</code> do not separate them.',
+    'Guess toward action and the customer pays twice. Guess toward inaction and the order is lost. And the eager mistake is invisible downstream, because <b>a recovery link creates a new order</b> and clubbing is scoped to one <code>order_id</code>.',
+    'So resolve which world you are in before acting. Status is not a stored field &mdash; it is a <b>pure fold over an append-only log</b>, ordered by Razorpay&rsquo;s <code>event_time</code> rather than by arrival.',
     'Five deterministic services, one deterministic orchestrator, two agents. <b>The model cannot route itself into existence</b> &mdash; the strategist is reachable from exactly one verdict out of six.',
     'Turn 2&rsquo;s answer decides whether turn 3 <b>exists</b>. That conditional branch is the agency claim &mdash; not a longer prompt, a different graph.',
     '<b>The model extracts. The rules decide.</b> Reading prose is a language problem; adjudicating a reference number against an acquirer RRN is not.',
