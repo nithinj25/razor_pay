@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     #: 15s budget - Nemotron was spending 5-13s a call.
     gemini_api_key: str = ""
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_model: str = "gemini-3.1-flash-lite"
 
     # -- WhatsApp (Meta Cloud API) -----------------------------------
     #: Delivery only. The decision to send, the template and the channel
